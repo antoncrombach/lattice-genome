@@ -72,6 +72,7 @@ MONOMER_COLOUR_MAP = {
 # The elements from which we build a genome
 NeutralElement = collections.namedtuple('NeutralElement', [])
 TranscribedElement = collections.namedtuple('TranscribedElement', [])
+EnhancerElement = collections.namedtuple('EnhancerElement', [])
 
 
 class LatticeGenome(object):
@@ -100,7 +101,8 @@ class LatticeGenome(object):
 
         try:
             for elm in conf['genome']:
-                # Each element has a type, and a two-dimensional (xy) position.
+                # Each element has a type, and may have a two-dimensional (xy) 
+                # position.
                 if elm['type'] == 'neutral':
                     self._polymer.append(NeutralElement())
                     try:
@@ -135,7 +137,7 @@ class LatticeGenome(object):
         """Write genome to json dict."""
         result = {}
         result['genome'] = [
-            {'type': type(e).__name__[:-7].lower(), 'x': p[0], 'y': p[1]}
+            {'type': type(e).__name__[0:-7].lower(), 'x': p[0], 'y': p[1]}
                 for e,p in zip(self._polymer, self._positions)]
         result['temperature'] = self._temp
         return result
@@ -163,24 +165,24 @@ class LatticeGenome(object):
         Set initial position of each of the monomers. Default is a random 
         configuration.
         """
-        def __next_position(xy):
-            """Auxilary function to choose a step (n,s,e,w) on the lattice."""
-            x, y = tuple(xy)
-            nbh = [[-y, x], [x, y], [y, -x]]
+        def __next_direction(xy):
+            """Auxilary function to choose a step (n,s,e) on the lattice."""
+            p, q = tuple(xy)
+            nbh = [[-q, p], [p, q], [q, -p]]
             return nbh[npr.randint(3)]
 
         # First monomer is positioned at [0,0], second [x,y] takes one step 
-        # north, south, east, or west on the lattice.
+        # north, south, east on the lattice.
         x = npr.randint(2)
         y = npr.choice([-1, 1]) if x == 0 else 0
         
         # Two positions done, let's do the rest
-        self._positions = [[0, 0], [x, y]]
+        directions = [[0, 0], [x, y]]
         for _ in self._polymer[2:]:
-            self._positions.append(__next_position(self._positions[-1]))
+            directions.append(__next_direction(directions[-1]))
 
         # Input to cumsum is a list, returns a numpy array
-        self._positions = np.cumsum(self._positions, axis=0)
+        self._positions = np.cumsum(directions, axis=0)
 
     def initial_energy(self):
         """
@@ -299,7 +301,7 @@ class World(object):
         self._stats_time = 10
         self._translate_time = np.max([1000, int(self._end_time / 100)])
 
-        self._genome = []
+        self._genome = None
         # self._transcription_factory = []
 
     def json_decode(self, conf):
@@ -350,22 +352,36 @@ class World(object):
 class Observers(object):
     """Observer manager."""
     def __init__(self):
+        # Graphics
         self._first = True
         self._fig = None
         
+        # Polymer line segments and monomer positions
         self._polymer_line = None
         self._monomers = None
-
+        # Energy over time line, with a label tracking the latest energy
         self._energy_line = None
         self._energy_label = None
 
+        # Tracking polymer positions over time, save to file
+        self._polymer_positions = {}
+        self.polymer_positions_fname = ''
+
     def json_decode(self, conf):
-        """At the moment there is no configuration to read in."""
-        pass
+        """Reading in which data to collect and save to file."""
+        # At the moment we only track polymer positions
+        try:
+            self.polymer_positions_fname = \
+                conf['observers']['polymer_positions']
+        except KeyError:
+            # Fail silently, because we do not *have* to track polymer 
+            # positions.
+            pass
 
     def json_encode(self):
-        """There is also nothing to write out."""
-        pass
+        """Write out polymer positions per time step."""
+        return [{'time': t, 'positions': p.tolist()} 
+            for t,p in sorted(self._polymer_positions.iteritems())]
 
     def observe(self, time_step, world):
         """
@@ -374,9 +390,12 @@ class Observers(object):
         """
         # Get polymer data, first energy then positions
         en = world.get_genome().get_energy()
+        xy = world.get_genome().get_positions()
+
+        # Store positions for writing to file later
+        self._polymer_positions[time_step] = np.copy(xy)
 
         # Reshape into sequence of line segments [[(x0,y0),(x1,y1)],...]
-        xy = world.get_genome().get_positions()
         xy = xy.reshape(-1, 1, 2)
         segments = np.hstack([xy[:-1], xy[1:]])
 
@@ -402,6 +421,10 @@ class Observers(object):
 
             self._fig.canvas.draw()
             self._fig.canvas.flush_events()
+
+    def have_results_to_save(self):
+        """Quick check if we have anything to write to disk."""
+        return self.polymer_positions_fname
 
     def __prepare_polymer_plot(self, time_step, world, xy, segments):
         """Prepare polymer line and monomers."""
@@ -485,15 +508,20 @@ def read_json_configuration(fname):
     return conf
 
 
-def write_json_configuration(fname, out_data):
+def write_json_configuration(fname, out_data, compress=False):
     """Write out simulation parameters and results (in JSON format)."""
     try:
         outfile = open(fname, 'w')
     except IOError:
         print('EE Cannot open for writing:', fname)
     else:
+        # Format json. Compress squeezes whitespace out.
+        indent = None if compress else 2
+        separators = (',', ':') if compress else (', ', ': ')
+        # Dump a json string and write it to file.
         conf = outfile.write(
-            json.dumps(out_data, indent=2, encoding='utf-8').decode('utf8'))
+            json.dumps(out_data, indent=indent, separators=separators, 
+                encoding='utf-8').decode('utf8'))
 
 
 def write_simulation_results(opt, config, world, observers):
@@ -504,13 +532,20 @@ def write_simulation_results(opt, config, world, observers):
     out_data = {'random_seed': config['random_seed']}
     out_data.update(world.json_encode())
     out_data.update(world.get_genome().json_encode())
-    # Ignoring observers (for now)
 
     # Preparing file name
     outfilename = os.path.expanduser(opt.save)
     print("# Writing results to", outfilename)
     write_json_configuration(outfilename, out_data)
 
+    # Perhaps we also need to write data picked up by observers
+    if observers.have_results_to_save():
+        # We only have polymer positions at the moment...
+        print("# Writing data of observers")
+        outfilename = os.path.expanduser(observers.polymer_positions_fname)
+        out_data = observers.json_encode()
+        write_json_configuration(outfilename, out_data, True)
+        
 
 def main():
     """Starting point. In general, simulations are built as follows:
@@ -551,8 +586,9 @@ def main():
     w.simulate(o)
     # If you do not want the plot window to close immediately, uncomment 
     # the two lines below.
-    # print("# Giving you some time to enjoy the plots...")
-    # time.sleep(60)
+    print("# Giving you some time to enjoy the plots...")
+    # Wait for given number of seconds
+    time.sleep(60)
 
     # Write out simulation results
     write_simulation_results(options, conf, w, o)
@@ -574,7 +610,7 @@ if __name__ == '__main__':
             help='configuration file name')
         parser.add_option('-s', '--save', type='string', 
             default='saved.json', 
-            help='results file name')
+            help='save final state of simulation to file name')
         (options, args) = parser.parse_args()
         
         #if len(args) < 1:
@@ -587,13 +623,13 @@ if __name__ == '__main__':
         if options.verbose: print((time.time() - start_time) / 60.0)
         sys.exit( 0 )
 
-    except KeyboardInterrupt, e: # Ctrl-C
+    except KeyboardInterrupt as e: # Ctrl-C
         raise e
 
-    except SystemExit, e: # sys.exit()
+    except SystemExit as e: # sys.exit()
         raise e
 
-    except Exception, e:
+    except Exception as e:
         print('Error, unexpected exception')
         print(str(e))
         traceback.print_exc()

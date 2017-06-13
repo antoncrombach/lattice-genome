@@ -1,8 +1,8 @@
 {
-    "end_time": 100,
+    "end_time": 10000,
     "observe_time": 10,
     "random_seed": 18,
-    "temperature": 2.5,
+    "temperature": 12.5,
     "genome": [        
         {"type": "neutral"},
         {"type": "neutral"},
@@ -16,19 +16,6 @@
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "neutral"},
-        {"type": "transcribed"},
-        {"type": "transcribed"},
-        {"type": "transcribed"},
-        {"type": "transcribed"},
-        {"type": "transcribed"},
         {"type": "transcribed"},
         {"type": "transcribed"},
         {"type": "transcribed"},
@@ -45,6 +32,19 @@
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "transcribed"},
+        {"type": "transcribed"},
+        {"type": "transcribed"},
+        {"type": "transcribed"},
+        {"type": "transcribed"},
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
@@ -60,5 +60,8 @@
             "x": 0,
             "y": 0
         }
+    },
+    "observers": {
+        "polymer_positions": "pol_pos.json"
     }
 }
