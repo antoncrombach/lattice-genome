@@ -1,8 +1,8 @@
 {
-    "end_time": 10000,
+    "end_time": 20000,
     "observe_time": 10,
     "random_seed": 18,
-    "temperature": 12.5,
+    "temperature": 5.5,
     "genome": [        
         {"type": "neutral"},
         {"type": "neutral"},
@@ -55,11 +55,10 @@
         {"type": "neutral"},
         {"type": "neutral"}
     ],
-    "world": {
-        "transcription_machinery": {
-            "x": 0,
-            "y": 0
-        }
+    "transcription_factory": {
+        "x": 0,
+        "y": 0,
+        "radius": 3
     },
     "observers": {
         "polymer_positions": "pol_pos.json"

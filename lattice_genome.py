@@ -72,7 +72,7 @@ MONOMER_COLOUR_MAP = {
 # The elements from which we build a genome
 NeutralElement = collections.namedtuple('NeutralElement', [])
 TranscribedElement = collections.namedtuple('TranscribedElement', [])
-EnhancerElement = collections.namedtuple('EnhancerElement', [])
+# EnhancerElement = collections.namedtuple('EnhancerElement', [])
 
 
 class LatticeGenome(object):
@@ -80,14 +80,14 @@ class LatticeGenome(object):
     def __init__(self):
         """Set attributes to default values to make sure they exist."""
         # Types of monomer, NeutralElement or TranscribedElement.
-        self._polymer = []
+        self.polymer = []
         # Positions of monomers on the lattice.
-        self._positions = []
+        self.positions = []
         self._positions_from_file = False
         # Energy accumulated due to non-adjacent monomers being neighbours
-        self._energy = 0.0
+        self.energy = 0.0
         # Temperature of world (arguably an attribute of the world, not genome)
-        self._temp = 0.0
+        self.temp = 0.0
         # Binary tree that keeps track of monomers in space. Used to quickly 
         # look up neighbours of a given monomer. About 4--5 times faster than
         # naive all-against-all calculation.
@@ -96,25 +96,25 @@ class LatticeGenome(object):
     def json_decode(self, conf):
         """Build genome from json dict."""
         # Reset polymer and positions to be empty
-        self._polymer = []
-        self._positions = []
+        self.polymer = []
+        self.positions = []
 
         try:
             for elm in conf['genome']:
                 # Each element has a type, and may have a two-dimensional (xy) 
                 # position.
                 if elm['type'] == 'neutral':
-                    self._polymer.append(NeutralElement())
+                    self.polymer.append(NeutralElement())
                     try:
-                        self._positions.append(
+                        self.positions.append(
                             [int(elm['x']), int(elm['y'])])
                     except KeyError:
                         pass
 
                 elif elm['type'] == 'transcribed':
-                    self._polymer.append(TranscribedElement())
+                    self.polymer.append(TranscribedElement())
                     try:
-                        self._positions.append(
+                        self.positions.append(
                             [int(elm['x']), int(elm['y'])])
                     except KeyError:
                         pass
@@ -124,12 +124,12 @@ class LatticeGenome(object):
 
         # I assume we have read all positions if the array is of equal length 
         # as the polymer one. Then, convert positions to np.array
-        if len(self._polymer) == len(self._positions):
-            self._positions = np.array(self._positions)
+        if len(self.polymer) == len(self.positions):
+            self.positions = np.array(self.positions)
             self._positions_from_file = True
 
         try:
-            self._temp = conf['temperature']
+            self.temp = conf['temperature']
         except KeyError:
             print('EE Missing temperature.')
 
@@ -138,8 +138,8 @@ class LatticeGenome(object):
         result = {}
         result['genome'] = [
             {'type': type(e).__name__[0:-7].lower(), 'x': p[0], 'y': p[1]}
-                for e,p in zip(self._polymer, self._positions)]
-        result['temperature'] = self._temp
+                for e,p in zip(self.polymer, self.positions)]
+        result['temperature'] = self.temp
         return result
 
     def get_polymer_types_abbreviated(self):
@@ -147,15 +147,7 @@ class LatticeGenome(object):
         Return polymer as a list of 'n's and 't's, respectively neutral and 
         transcribed monomers.
         """
-        return [type(e).__name__[0].lower() for e in self._polymer]
-
-    def get_positions(self):
-        """Return the positions of the monomers (x, y)."""
-        return self._positions
-
-    def get_energy(self):
-        """Return the energy of the polymer."""
-        return self._energy
+        return [type(e).__name__[0].lower() for e in self.polymer]
 
     def has_positions_from_file(self):
         return self._positions_from_file
@@ -178,18 +170,18 @@ class LatticeGenome(object):
         
         # Two positions done, let's do the rest
         directions = [[0, 0], [x, y]]
-        for _ in self._polymer[2:]:
+        for _ in self.polymer[2:]:
             directions.append(__next_direction(directions[-1]))
 
         # Input to cumsum is a list, returns a numpy array
-        self._positions = np.cumsum(directions, axis=0)
+        self.positions = np.cumsum(directions, axis=0)
 
     def initial_energy(self):
         """
         Energy of a polymer is sum of contact energy between not-nearest
         neighbours.
         """
-        self._energy, self._kdtree = self.__calculate_energy(self._positions)
+        self.energy, self._kdtree = self.__calculate_energy(self.positions)
 
     def step(self):
         """
@@ -197,11 +189,11 @@ class LatticeGenome(object):
         an exponential distribution.
         """
         new_positions, new_energy, new_tree = self.__attempt()
-        delta_e = new_energy - self._energy
-        if delta_e < 0.0 or npr.random() <= np.exp(-(delta_e / self._temp)):
+        delta_e = new_energy - self.energy
+        if delta_e < 0.0 or npr.random() <= np.exp(-(delta_e / self.temp)):
             # Biased acceptance of attempts
-            self._positions = new_positions
-            self._energy = new_energy
+            self.positions = new_positions
+            self.energy = new_energy
             self._kdtree = new_tree
 
     def translate_to_origin(self):
@@ -210,9 +202,9 @@ class LatticeGenome(object):
         the origin (0,0).
         """
         # Watch out, integer division!
-        centroid = np.sum(self._positions, axis=0) // len(self._positions)
+        centroid = np.sum(self.positions, axis=0) // len(self.positions)
         # Translate all points.
-        self._positions -= centroid
+        self.positions -= centroid
 
     def __attempt(self):
         """
@@ -221,7 +213,7 @@ class LatticeGenome(object):
 
         This is the so-called Mover set 1 (MS1) of Chan & Dill 1993, 1994.
         """
-        positions = np.copy(self._positions)
+        positions = np.copy(self.positions)
         # Pick a monomer
         idx = npr.randint(len(positions))
 
@@ -285,7 +277,7 @@ class LatticeGenome(object):
         return energy, kdtree
 
     def __len__(self):
-        return len(self._polymer)
+        return len(self.polymer)
 
     def __str__(self):
         return "-".join(self.get_polymer_types_abbreviated())
@@ -297,43 +289,46 @@ class World(object):
     objects, namely the genome and a transcription factory.
     """
     def __init__(self):
-        self._end_time = 100
-        self._stats_time = 10
-        self._translate_time = np.max([1000, int(self._end_time / 100)])
+        self.end_time = 100
+        self.stats_time = 10
+        self._translate_time = np.max([1000, int(self.end_time / 100)])
 
-        self._genome = None
-        # self._transcription_factory = []
+        self.genome = None
+        self.transcription_factory = None
 
     def json_decode(self, conf):
         """Read in simulation parameters."""
         try:
-            self._end_time = conf['end_time']
-            self._stats_time = conf['observe_time']
+            self.end_time = conf['end_time']
+            self.stats_time = conf['observe_time']
         except KeyError:
             print("EE Missing time.")
+
+        try:
+            tfactory = conf['world']['transcription_factory']
+            self.transcription_factory = (tfactory['x'], tfactory['y'])
+        except KeyError:
+            print("WW Missing transcription factory.")
 
     def json_encode(self):
         """Write simulation parameters to dict."""
         return {
-            'end_time': self._end_time,
-            'observe_time': self._stats_time
+            'end_time': self.end_time,
+            'observe_time': self.stats_time
             }
 
     def add_genome(self, genome):
-        self._genome = genome
-        if not self._genome.has_positions_from_file():
-            self._genome.initial_positions()
-        self._genome.initial_energy()
-
-    def get_genome(self):
-        return self._genome
+        self.genome = genome
+        if not self.genome.has_positions_from_file():
+            self.genome.initial_positions()
+        self.genome.initial_energy()
 
     def simulate(self, observers):
         """Monte Carlo simulation algorithm."""
         time = 0
-        while time < self._end_time:
+        while time < self.end_time:
             # Output statistics
-            if time % self._stats_time == 0:
+            if time % self.stats_time == 0:
                 observers.observe(time, self)
             
             # A single simulation step is defined as to attempt to "move" each
@@ -343,10 +338,10 @@ class World(object):
 
     def __step(self, time):
         """Attempt to change world..."""
-        self._genome.step()
+        self.genome.step()
         if time % self._translate_time == 0:
-            self._genome.translate_to_origin()
-        # self._transcription_factory.step()
+            self.genome.translate_to_origin()
+        # transcription factory does not do anything
 
 
 class Observers(object):
@@ -357,14 +352,14 @@ class Observers(object):
         self._fig = None
         
         # Polymer line segments and monomer positions
-        self._polymer_line = None
+        self.polymer_line = None
         self._monomers = None
         # Energy over time line, with a label tracking the latest energy
         self._energy_line = None
         self._energy_label = None
 
         # Tracking polymer positions over time, save to file
-        self._polymer_positions = {}
+        self.polymer_positions = {}
         self.polymer_positions_fname = ''
 
     def json_decode(self, conf):
@@ -381,7 +376,7 @@ class Observers(object):
     def json_encode(self):
         """Write out polymer positions per time step."""
         return [{'time': t, 'positions': p.tolist()} 
-            for t,p in sorted(self._polymer_positions.iteritems())]
+            for t,p in sorted(self.polymer_positions.iteritems())]
 
     def observe(self, time_step, world):
         """
@@ -389,11 +384,11 @@ class Observers(object):
         their statistics.
         """
         # Get polymer data, first energy then positions
-        en = world.get_genome().get_energy()
-        xy = world.get_genome().get_positions()
+        en = world.genome.energy
+        xy = world.genome.positions
 
         # Store positions for writing to file later
-        self._polymer_positions[time_step] = np.copy(xy)
+        self.polymer_positions[time_step] = np.copy(xy)
 
         # Reshape into sequence of line segments [[(x0,y0),(x1,y1)],...]
         xy = xy.reshape(-1, 1, 2)
@@ -429,8 +424,8 @@ class Observers(object):
     def __prepare_polymer_plot(self, time_step, world, xy, segments):
         """Prepare polymer line and monomers."""
         # The polymer with its monomers is built from lines and polygons
-        self._polymer_line = mpl.collections.LineCollection(segments)
-        self._polymer_line.set_color(POLYMER_BLUE)
+        self.polymer_line = mpl.collections.LineCollection(segments)
+        self.polymer_line.set_color(POLYMER_BLUE)
 
         self._monomers = mpl.collections.RegularPolyCollection(4, 
             sizes=[10.0 for _ in xy], offsets=xy, 
@@ -439,12 +434,12 @@ class Observers(object):
         self._monomers.set_transform(trans)
 
         # Different monomers have different colours
-        pt = world.get_genome().get_polymer_types_abbreviated()
+        pt = world.genome.get_polymer_types_abbreviated()
         pc = [MONOMER_COLOUR_MAP[m] for m in pt]
         self._monomers.set_facecolor(pc)
         self._monomers.set_edgecolor(pc)
 
-        self._axs[0].add_collection(self._polymer_line)
+        self._axs[0].add_collection(self.polymer_line)
         self._axs[0].add_collection(self._monomers)
 
         # Make the plot pretty, no annoying tick or their labels
@@ -461,7 +456,7 @@ class Observers(object):
     def __observe_polymer(self, time_step, xy, segments):
         """Update time and polymer positions."""
         self._axs[0].set_title('Time = {0}'.format(time_step))
-        self._polymer_line.set_paths(segments)
+        self.polymer_line.set_paths(segments)
         self._monomers.set_offsets(xy)        
 
     def __prepare_energy_plot(self, time_step, energy):
@@ -531,7 +526,7 @@ def write_simulation_results(opt, config, world, observers):
     """
     out_data = {'random_seed': config['random_seed']}
     out_data.update(world.json_encode())
-    out_data.update(world.get_genome().json_encode())
+    out_data.update(world.genome.json_encode())
 
     # Preparing file name
     outfilename = os.path.expanduser(opt.save)
