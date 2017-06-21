@@ -15,6 +15,10 @@ The variant 'lattice_genome_loops.py' enables the use of enhancer monomers to ex
 
 # FUTURE WORK
 
+Short-listed:
+
+- time vs long range interactions
+
 Also known as the to-do list:
 
 - Move positions from LatticeGenome to World.

@@ -414,11 +414,12 @@ class World(object):
             # Output statistics
             if time % self.stats_time == 0:
                 observers.observe(time, self)
-            
-            # A single simulation step is defined as to attempt to "move" each
-            # element of the simulation. (At the moment only the genome.)
-            self.__step(time)
-            time += 1
+                
+            if not observers.pause:
+                # A single simulation step is defined as to attempt to "move" each
+                # element of the simulation. (At the moment only the genome.)
+                self.__step(time)
+                time += 1
 
     def __step(self, time):
         """Attempt to change world..."""
@@ -431,16 +432,22 @@ class World(object):
 class Observers(object):
     """Observer manager."""
     def __init__(self):
+        # Running or pausing
+        self.pause = False
         # Graphics
         self._first = True
         self._fig = None
         
         # Polymer line segments and monomer positions
-        self.polymer_line = None
+        self._polymer_line = None
         self._monomers = None
+
         # Energy over time line, with a label tracking the latest energy
         self._energy_line = None
         self._energy_label = None
+
+        # Contact matrix
+        self._contacts = None
 
         # Tracking polymer positions over time, save to file
         self.polymer_positions = {}
@@ -472,7 +479,8 @@ class Observers(object):
         xy = world.genome.positions
 
         # Store positions for writing to file later
-        self.polymer_positions[time_step] = np.copy(xy)
+        if self.have_results_to_save:
+            self.polymer_positions[time_step] = np.copy(xy)
 
         # Reshape into sequence of line segments [[(x0,y0),(x1,y1)],...]
         xy = xy.reshape(-1, 1, 2)
@@ -481,22 +489,42 @@ class Observers(object):
         if self._first:
             # Set up visualization only once
             self._first = False
-            self._fig, self._axs = plt.subplots(nrows=2, ncols=1)
+            self._fig, self._axs = plt.subplots(nrows=2, ncols=2)
 
-            # Axis 0: 2D polymer conformation
+            # Axis 0, 0: 2D polymer conformation
             self.__prepare_polymer_plot(time_step, world, xy, segments)
 
-            # Axis 1: energy of the polymer over time
+            # Axis 1, 0: energy of the polymer over time
             self.__prepare_energy_plot(time_step, en)
+
+            # Axis 0, 1: distance matrix
+            self.__prepare_pairwise_distance_plot(time_step, 
+                world.genome.positions)
+            
+            # Axis 1, 1:
+            self.__prepare_long_range_iaction_plot(time_step, 
+                world.genome.positions)
+
+            # Connect key press and mouse button events to pause simulation.
+            self._fig.canvas.mpl_connect("key_press_event", 
+                self.__pause_simulation)
+            self._fig.canvas.mpl_connect("button_press_event", 
+                self.__pause_simulation)
 
             # Preparations done
             self._fig.show()
 
         else:
-            # Updating time and polymer positions
+            # Update time and polymer positions
             self.__observe_polymer(time_step, xy, segments)
-            # Updating time vs energy graph
+            # Update time vs energy graph
             self.__observe_energy(time_step, en)
+            # Update distance matrix
+            self.__observe_pairwise_distances(time_step, 
+                world.genome.positions)
+            # Update time and long range interactions
+            self.__observe_long_range_interactions(time_step, 
+                world.genome.positions)
 
             self._fig.canvas.draw()
             self._fig.canvas.flush_events()
@@ -505,15 +533,22 @@ class Observers(object):
         """Quick check if we have anything to write to disk."""
         return self.polymer_positions_fname
 
+    def __pause_simulation(self, event):
+        """
+        Pressing any key pauses the simulation. A second key press will start
+        the simulation again.
+        """
+        self.pause = not self.pause
+
     def __prepare_polymer_plot(self, time_step, world, xy, segments):
         """Prepare polymer line and monomers."""
         # The polymer with its monomers is built from lines and polygons
-        self.polymer_line = mpl.collections.LineCollection(segments)
-        self.polymer_line.set_color(POLYMER_BLUE)
+        self._polymer_line = mpl.collections.LineCollection(segments)
+        self._polymer_line.set_color(POLYMER_BLUE)
 
         self._monomers = mpl.collections.RegularPolyCollection(4, 
             sizes=[10.0 for _ in xy], offsets=xy, 
-            transOffset=self._axs[0].transData)
+            transOffset=self._axs[0, 0].transData)
         trans = mpl.transforms.Affine2D().scale(self._fig.dpi/72.0)
         self._monomers.set_transform(trans)
 
@@ -523,42 +558,42 @@ class Observers(object):
         self._monomers.set_facecolor(pc)
         self._monomers.set_edgecolor(pc)
 
-        self._axs[0].add_collection(self.polymer_line)
-        self._axs[0].add_collection(self._monomers)
+        self._axs[0, 0].add_collection(self._polymer_line)
+        self._axs[0, 0].add_collection(self._monomers)
 
         # Make the plot pretty, no annoying tick or their labels
         lim = (-15, 15)
-        self._axs[0].set_xlim(*lim)
-        self._axs[0].set_ylim(*lim)
-        self._axs[0].set_xticks([])
-        self._axs[0].set_xticklabels([])
-        self._axs[0].set_yticks([])
-        self._axs[0].set_yticklabels([])
+        self._axs[0, 0].set_xlim(*lim)
+        self._axs[0, 0].set_ylim(*lim)
+        self._axs[0, 0].set_xticks([])
+        self._axs[0, 0].set_xticklabels([])
+        self._axs[0, 0].set_yticks([])
+        self._axs[0, 0].set_yticklabels([])
         # Make sure the plot is square
-        self._axs[0].set_aspect(1.0)
+        self._axs[0, 0].set_aspect(1.0)
 
     def __observe_polymer(self, time_step, xy, segments):
         """Update time and polymer positions."""
-        self._axs[0].set_title('Time = {0}'.format(time_step))
-        self.polymer_line.set_paths(segments)
+        self._axs[0, 0].set_title('Time = {0}'.format(time_step))
+        self._polymer_line.set_paths(segments)
         self._monomers.set_offsets(xy)        
 
     def __prepare_energy_plot(self, time_step, energy):
         """Prepare to plot energy over time."""
         # Create plotting area with 1 data point (at the moment)
-        self._energy_line, = self._axs[1].plot([time_step], [energy])
+        self._energy_line, = self._axs[1, 0].plot([time_step], [energy])
 
         # No extra spines
-        self._axs[1].spines['top'].set_visible(False)
-        self._axs[1].spines['right'].set_visible(False)
+        self._axs[1, 0].spines['top'].set_visible(False)
+        self._axs[1, 0].spines['right'].set_visible(False)
 
         # Add labels for clarity
-        self._axs[1].set_xlabel('Time (au)')
-        self._axs[1].set_ylabel('Energy (au)')
+        self._axs[1, 0].set_xlabel('Time (au)')
+        self._axs[1, 0].set_ylabel('Energy (au)')
 
         # Keep track of current energy of the polymer
-        self._energy_label = self._axs[1].text(.9, .9, 
-            'E = {0}'.format(energy), transform=self._axs[1].transAxes)        
+        self._energy_label = self._axs[1, 0].text(.9, .9, 
+            'E = {0}'.format(energy), transform=self._axs[1, 0].transAxes)
 
     def __observe_energy(self, time_step, energy):
         """Update time vs energy graph."""
@@ -570,8 +605,39 @@ class Observers(object):
         self._energy_line.set_data(
             (np.append(aux_t, time_step), np.append(aux_e, energy)))
         # Rescale etc. needed!
-        self._axs[1].relim()
-        self._axs[1].autoscale_view()
+        self._axs[1, 0].relim()
+        self._axs[1, 0].autoscale_view()
+
+    def __prepare_pairwise_distance_plot(self, time_step, positions):
+        """Prepare to plot distance matrices."""
+        # Calculating distances, unfortunately computationally costly.
+        d = spsp.distance.squareform(
+                spsp.distance.pdist(positions, 'cityblock'))
+        self._dist_img = self._axs[0, 1].imshow(d, interpolation='nearest')
+
+        # Add labels for clarity
+        self._axs[0, 1].set_title('Pairwise distance')
+        self._axs[0, 1].set_ylabel('Monomer index')
+
+        # Add colorbar, make sure to specify tick locations
+        self._fig.colorbar(self._dist_img, ticks=[0, 5, 10, 15], 
+            ax=self._axs[0, 1])
+
+    def __observe_pairwise_distances(self, time_step, positions):
+        """Update matrix of pairwise distances."""
+        # Calculating distances, unfortunately computationally costly.
+        d = spsp.distance.squareform(
+                spsp.distance.pdist(positions, 'cityblock'))
+        self._dist_img.set_data(d)
+
+    def __prepare_long_range_iaction_plot(self, time_step, positions):
+        """Prepare to plot many lines."""
+        # How do I define a long range interaction?
+        pass
+
+    def __observe_long_range_interactions(self, time_step, positions):
+        """Calculate long range interactions and plot them per monomer."""
+        pass
 
 
 # Functions
