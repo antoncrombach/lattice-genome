@@ -82,10 +82,14 @@ class LatticeGenome(object):
     """Self-avoiding polymer genome on lattice."""
     def __init__(self):
         """Set attributes to default values to make sure they exist."""
-        # Types of monomer, NeutralElement or TranscribedElement.
+        # Types of monomer: NeutralElement, TranscribedElement, EnhancerElm.
         self._polymer = []
-        # Positions of monomers on the lattice
-        # Positions initiales déterminées à partir du fichier de configuration T/F
+        # Auxilary set to keep track of enhancers (which have a different
+        # energy contribution)
+        self._chain_position_enhancer = set([])
+        # Positions of monomers on the lattice. Initial positions may be read 
+        # from the configuration file. If they are not present, random 
+        # positions are generated.
         self._positions = []
         self._positions_from_file = False
         # Energy accumulated due to non-adjacent monomers being neighbours
@@ -143,6 +147,11 @@ class LatticeGenome(object):
             self._positions = np.array(self._positions)
             self._positions_from_file = True
 
+        # Determine where enhancers are, store the indices.
+        for i in range(len(self._polymer)):
+            if type(self._polymer[i]) == type(EnhancerElement()):
+                self._chain_position_enhancer.add(i) 
+
         try:
             #clef 'temperature' contient une valeur de température
             self._temp = conf['temperature']
@@ -185,8 +194,11 @@ class LatticeGenome(object):
         configuration.
         """
         def __next_position(xy):
-            """Auxilary function to choose a step (n,s,e) on the lattice."""
-            #la fonction ne choisit pas les mêmes directions selon la direction choisit à la position précédente, ce sont bien 3 positions différentes mais pas les mêmes à chaque fois
+            """
+            Auxilary function to choose a step on the lattice. The old 
+            direction is given by 'xy', and the new one will be either 
+            continueing in the same direction, or turning left/right.
+            """
             x, y = tuple(xy)
             nbh = [[-y, x], [x, y], [y, -x]]
             return nbh[npr.randint(3)]
@@ -282,37 +294,34 @@ class LatticeGenome(object):
 
         These energy levels should lead to polymers that become elongated.
         """
-        DIST_TO_ENERGY_others = [10, 1, 0.1]
-        DIST_TO_ENERGY_enhancers = [-10, -1, -0.1]
+        DIST_TO_ENERGY_others = [10, 1, 0.1, 0.0]
+        DIST_TO_ENERGY_enhancers = [-20, -10, -5, -0.2]
 
         # Start with zero energy.
         energy = 0
         
-        # KDTree expects all positions of the monomers, a max distance (2), and
+        # KDTree expects all positions of the monomers, a max distance (3), and
         # a distance measure (1.0 = Manhattan distance).
         kdtree = spsp.cKDTree(aux_positions, compact_nodes=False, 
             balanced_tree=False)
-        neighbours = kdtree.query_ball_point(aux_positions, 2, p=1.0)
+        neighbours = kdtree.query_ball_point(aux_positions, 3, p=1.0)
         
-        chain_position_enhancer=[]
-
-        for i in range(len(self._polymer)):
-            if type(self._polymer[i])==type(EnhancerElement()):
-                chain_position_enhancer.append(i) 
-    
         for i, pnbs in enumerate(zip(aux_positions,neighbours)):
             p, nbs= pnbs
-            if i in chain_position_enhancer:
+            if i in self._chain_position_enhancer:
                 for j in nbs:
-                    if j!=i:
-                        if j in chain_position_enhancer:
-                            energy+=DIST_TO_ENERGY_enhancers[np.sum(np.abs(p - aux_positions[j]))]
-                        elif j not in chain_position_enhancer:
-                            energy+=DIST_TO_ENERGY_others[np.sum(np.abs(p - aux_positions[j]))]
+                    if j != i:
+                        if j in self._chain_position_enhancer:
+                            energy += DIST_TO_ENERGY_enhancers[
+                                np.sum(np.abs(p - aux_positions[j]))]
+                        else:
+                            energy += DIST_TO_ENERGY_others[
+                                np.sum(np.abs(p - aux_positions[j]))]
             else:
                 for j in nbs:
                     if j != i:
-                        energy+=DIST_TO_ENERGY_others[np.sum(np.abs(p - aux_positions[j]))]
+                        energy += DIST_TO_ENERGY_others[
+                            np.sum(np.abs(p - aux_positions[j]))]
 
         return energy, kdtree
 

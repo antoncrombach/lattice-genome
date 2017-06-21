@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# coding: utf-8
 """
     Copyright (C) 2017  Anton Crombach (anton.crombach@college-de-france.fr)
 
@@ -63,7 +64,8 @@ POLYMER_BLUE = (0.125, 0.469, 0.707, 0.400)
 # Colour map, consisting of blue (n) and orange (t), both with 60% transparency
 MONOMER_COLOUR_MAP = {
     'n': (0.125, 0.469, 0.707, 0.600),
-    't': (1.000, 0.498, 0.055, 0.600)
+    't': (1.000, 0.498, 0.055, 0.600),
+    'e': (0.5, 0.798, 0.055, 0.600)
     }
 
 
@@ -72,16 +74,21 @@ MONOMER_COLOUR_MAP = {
 # The elements from which we build a genome
 NeutralElement = collections.namedtuple('NeutralElement', [])
 TranscribedElement = collections.namedtuple('TranscribedElement', [])
-# EnhancerElement = collections.namedtuple('EnhancerElement', [])
+EnhancerElement = collections.namedtuple('EnhancerElement', [])
 
 
 class LatticeGenome(object):
     """Self-avoiding polymer genome on lattice."""
     def __init__(self):
         """Set attributes to default values to make sure they exist."""
-        # Types of monomer, NeutralElement or TranscribedElement.
+        # Types of monomer, NeutralElement, TranscribedElm, EnhancerElm.
         self.polymer = []
-        # Positions of monomers on the lattice.
+        # Auxilary set to keep track of enhancers (which have a different
+        # energy contribution)
+        self._chain_position_enhancer = set([])
+        # Positions of monomers on the lattice. Initial positions may be read 
+        # from the configuration file. If they are not present, random 
+        # positions are generated.
         self.positions = []
         self._positions_from_file = False
         # Energy accumulated due to non-adjacent monomers being neighbours
@@ -96,6 +103,10 @@ class LatticeGenome(object):
     def json_decode(self, conf):
         """Build genome from json dict."""
         # Reset polymer and positions to be empty
+        # AL: a quoi cela sert-il ? Les listes ne sont-elles pas déjà vides 
+        #     juste après la création de l'objet ?
+        # AC: yes, they should be empty already. I'm just making sure they 
+        #     are, regardless of what other code we may add later.        
         self.polymer = []
         self.positions = []
 
@@ -108,11 +119,22 @@ class LatticeGenome(object):
                     try:
                         self.positions.append(
                             [int(elm['x']), int(elm['y'])])
+                    # Si le fichier de config ne contient pas de position xy, 
+                    # le programme continue. Elle seront générées 
+                    # aléatoirement par la suite.
                     except KeyError:
                         pass
 
                 elif elm['type'] == 'transcribed':
                     self.polymer.append(TranscribedElement())
+                    try:
+                        self.positions.append(
+                            [int(elm['x']), int(elm['y'])])
+                    except KeyError:
+                        pass
+
+                elif elm['type'] == 'enhancer':
+                    self.polymer.append(EnhancerElement())
                     try:
                         self.positions.append(
                             [int(elm['x']), int(elm['y'])])
@@ -128,13 +150,28 @@ class LatticeGenome(object):
             self.positions = np.array(self.positions)
             self._positions_from_file = True
 
+        # Determine where enhancers are, store the indices.
+        # AC: Using list comprehension to find indices of all enhancers
+        self._chain_position_enhancer = set(
+            [i for i,e in enumerate(self.polymer) 
+                if type(e) == type(EnhancerElement())])
+        # Original code:
+        # for i in range(len(self._polymer)):
+        #     if type(self._polymer[i]) == type(EnhancerElement()):
+        #         self._chain_position_enhancer.add(i)
+
         try:
+            # Clef 'temperature' contient une valeur de température.
             self.temp = conf['temperature']
         except KeyError:
             print('EE Missing temperature.')
 
     def json_encode(self):
         """Write genome to json dict."""
+        # Ecrire les fichier de sortie dans le même format que les fichiers de
+        # configuration, pq créer des collections.namedtuple si on l'utilise 
+        # en tant que chaîne de caractères, et comment fonctionne la fonction 
+        # type (renvoie type au lieu de TranscribedElement par ex).
         result = {}
         result['genome'] = [
             {'type': type(e).__name__[0:-7].lower(), 'x': p[0], 'y': p[1]}
@@ -158,7 +195,11 @@ class LatticeGenome(object):
         configuration.
         """
         def __next_direction(xy):
-            """Auxilary function to choose a step (n,s,e) on the lattice."""
+            """
+            Auxilary function to choose a step on the lattice. The old 
+            direction is given by 'xy', and the new one will be either 
+            continueing in the same direction, or turning left/right.
+            """
             p, q = tuple(xy)
             nbh = [[-q, p], [p, q], [q, -p]]
             return nbh[npr.randint(3)]
@@ -248,10 +289,14 @@ class LatticeGenome(object):
         - 10: monomers are on top of each other.
         - 1 : monomers are next to each other.
         - 0.1: monomers are diagonally close.
+        - -10: monomères superposés de 2 enhancers
+        - -1 : monomères proches de 2 enhancers
+        - -0.1: monomères éloignés de 2 enhancers
 
         These energy levels should lead to polymers that become elongated.
         """
-        DIST_TO_ENERGY = [10, 1, 0.1]
+        DIST_TO_ENERGY_others = [10, 1, 0.1, 0.0]
+        DIST_TO_ENERGY_enhancers = [-20, -10, -5, -0.2]
 
         # Start with zero energy.
         energy = 0
@@ -267,12 +312,21 @@ class LatticeGenome(object):
             # p is the current monomer, nbs is a list of its neighbours (these
             # are indices to monomers in aux_positions)
             p, nbs = pnbs
-            # Neighbour distance {0, 1, .., 4} to energy = {10, 1, 0.1} etc. 
-            # j is the index to a neighbour, whose position we retreive 
-            energy += np.sum(
-                [DIST_TO_ENERGY[e] for e in np.sum(np.array(
-                    [np.abs(p - aux_positions[j]) for j in nbs if i != j]), 
-                        axis=1)])
+            if i in self._chain_position_enhancer:
+                for j in nbs:
+                    if j != i:
+                        if j in self._chain_position_enhancer:
+                            energy += DIST_TO_ENERGY_enhancers[
+                                np.sum(np.abs(p - aux_positions[j]))]
+                        else:
+                            energy += DIST_TO_ENERGY_others[
+                                np.sum(np.abs(p - aux_positions[j]))]
+            else:
+                for j in nbs:
+                    if j != i:
+                        energy += DIST_TO_ENERGY_others[
+                            np.sum(np.abs(p - aux_positions[j]))]
+
         # Done.
         return energy, kdtree
 
