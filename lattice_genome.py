@@ -298,23 +298,23 @@ class World(object):
        the transcription factory, or another component. Next, a dictionary maps
        integers to objects.
 
-    ++ After an initial scan of the entire grid and calculating the starting 
+    (+) After an initial scan of the entire grid and calculating the starting 
         energy of the system, all updates are local --- which is fast.
-    ++ The two monomer moves are local and easy to perform. 
-    -- Adding more complex (non-local) moves is difficult (e.g. rotations of
+    (+) The two monomer moves are local and easy to perform. 
+    (-) Adding more complex (non-local) moves is difficult (e.g. rotations of
         parts of the polymer). Perhaps they are easier if we let go of the rule
         that all monomers are in the von Neuman neighbourhood (n, s, e, w).
-    -- If the ratio occupied/empty is low, many random site updates will not 
+    (-) If the ratio occupied/empty is low, many random site updates will not 
         do anything (i.e. wasting random numbers).
 
     2. Store object configuration on the lattice as a list of sites. We need 
        to keep track of which list intervals refer to which object -- 
        similarly to the dict mapping of (1).
 
-    ++ Easily converted to a more continuous approach.
-    ++ Different "moves", even exotic ones, are relatively easy.
-    -- KDTree (rebuilding) needed to speed up finding of neighbours locally.
-    -- Calculating energy is a global affair.
+    (+) Easily converted to a more continuous approach.
+    (+) Different "moves", even exotic ones, are relatively easy.
+    (-) KDTree (rebuilding) needed to speed up finding of neighbours locally.
+    (-) Calculating energy is a global affair.
 
     The main issue with using a lattice is that single monomer bonds are immutable -- unless I loosen that constraint --- which hampers the polymers flexibility. Are there alternative schemes that allow a more flexible polymer embedded on a lattice?
     """
