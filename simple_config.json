@@ -1,8 +1,8 @@
 {
     "end_time": 20000,
-    "observe_time": 10,
+    "observe_time": 100,
     "random_seed": 18,
-    "temperature": 5.5,
+    "temperature": 5.75,
     "genome": [        
         {"type": "neutral"},
         {"type": "neutral"},
@@ -21,6 +21,10 @@
         {"type": "transcribed"},
         {"type": "transcribed"},
         {"type": "transcribed"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
+        {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},

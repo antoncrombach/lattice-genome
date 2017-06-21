@@ -61,11 +61,11 @@ import matplotlib.pyplot as plt
 # RGBa (red, green, blue, alpha) for the polymer line
 POLYMER_BLUE = (0.125, 0.469, 0.707, 0.400)
 
-# Colour map, consisting of blue (n) and orange (t), both with 60% transparency
+# Colour map, consisting of blue (n), orange (t), and purple (e)
 MONOMER_COLOUR_MAP = {
-    'n': (0.125, 0.469, 0.707, 0.600),
-    't': (1.000, 0.498, 0.055, 0.600),
-    'e': (0.5, 0.798, 0.055, 0.600)
+    'n': (0.125, 0.469, 0.707, 0.700),
+    't': (1.000, 0.498, 0.055, 0.700),
+    'e': (0.593, 0.305, 0.637, 0.900)
     }
 
 
@@ -247,6 +247,12 @@ class LatticeGenome(object):
         # Translate all points.
         self.positions -= centroid
 
+    def long_range_interactions(self):
+        """
+        Return for each monomer, all monomers that it forms a long range interaction with.
+        """
+        return self._kdtree.query_ball_point(self.positions, 3, p=1.0)
+
     def __attempt(self):
         """
         Make a "move" on a copy of the polymer. Two possible moves are defined:
@@ -301,11 +307,11 @@ class LatticeGenome(object):
         # Start with zero energy.
         energy = 0
         
-        # KDTree expects all positions of the monomers, a max distance (2), and
+        # KDTree expects all positions of the monomers, a max distance (3), and
         # a distance measure (1.0 = Manhattan distance).
         kdtree = spsp.cKDTree(aux_positions, compact_nodes=False, 
             balanced_tree=False)
-        neighbours = kdtree.query_ball_point(aux_positions, 2, p=1.0)
+        neighbours = kdtree.query_ball_point(aux_positions, 3, p=1.0)
         
         # Iterate all monomers and their lists of neighbours
         for i, pnbs  in enumerate(zip(aux_positions, neighbours)):
@@ -477,6 +483,7 @@ class Observers(object):
         # Get polymer data, first energy then positions
         en = world.genome.energy
         xy = world.genome.positions
+        nbs = world.genome.long_range_interactions()
 
         # Store positions for writing to file later
         if self.have_results_to_save:
@@ -502,8 +509,7 @@ class Observers(object):
                 world.genome.positions)
             
             # Axis 1, 1:
-            self.__prepare_long_range_iaction_plot(time_step, 
-                world.genome.positions)
+            self.__prepare_long_range_iaction_plot(time_step, world, nbs)
 
             # Connect key press and mouse button events to pause simulation.
             self._fig.canvas.mpl_connect("key_press_event", 
@@ -523,8 +529,7 @@ class Observers(object):
             self.__observe_pairwise_distances(time_step, 
                 world.genome.positions)
             # Update time and long range interactions
-            self.__observe_long_range_interactions(time_step, 
-                world.genome.positions)
+            self.__observe_long_range_interactions(time_step, nbs)
 
             self._fig.canvas.draw()
             self._fig.canvas.flush_events()
@@ -539,6 +544,10 @@ class Observers(object):
         the simulation again.
         """
         self.pause = not self.pause
+        if self.pause:
+            print("# Paused...")
+        else:
+            print("# Running...")
 
     def __prepare_polymer_plot(self, time_step, world, xy, segments):
         """Prepare polymer line and monomers."""
@@ -630,14 +639,40 @@ class Observers(object):
                 spsp.distance.pdist(positions, 'cityblock'))
         self._dist_img.set_data(d)
 
-    def __prepare_long_range_iaction_plot(self, time_step, positions):
+    def __prepare_long_range_iaction_plot(self, time_step, world, neighbours):
         """Prepare to plot many lines."""
-        # How do I define a long range interaction?
-        pass
+        # How do I define a long range interaction? Any interaction with not-
+        # immediate neighbours is of long(er) range. A first attempt is to 
+        # sum the linear distances between monomers that engage in a long range
+        # interaction.
 
-    def __observe_long_range_interactions(self, time_step, positions):
+        pt = world.genome.get_polymer_types_abbreviated()
+        pc = [MONOMER_COLOUR_MAP[m] for m in pt]
+        
+        # i is the index to the current monomer, nbs is a list of 
+        # neighbours (indices to monomers)
+        self._lr_iaction_lines = []
+        for i, nbs in enumerate(neighbours):
+            line, = self._axs[1, 1].plot([time_step], 
+                np.sum([np.abs(i - j) for j in nbs]), color=pc[i])
+            self._lr_iaction_lines.append(line)
+        
+        # Add labels for clarity
+        self._axs[1, 1].set_title('Long-range interactions')
+        self._axs[1, 1].set_xlabel('Time (au)')
+        self._axs[1, 1].set_ylabel('Sum of linear distances')
+
+    def __observe_long_range_interactions(self, time_step, neighbours):
         """Calculate long range interactions and plot them per monomer."""
-        pass
+        for i, nbs in enumerate(neighbours):
+            aux_t, aux_lria = self._lr_iaction_lines[i].get_data()
+            self._lr_iaction_lines[i].set_data(
+                (np.append(aux_t, time_step), 
+                    np.append(aux_lria, np.sum([np.abs(i - j) for j in nbs]))))
+
+        # Rescale etc. needed!
+        self._axs[1, 1].relim()
+        self._axs[1, 1].autoscale_view()
 
 
 # Functions

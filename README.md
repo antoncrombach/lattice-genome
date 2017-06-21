@@ -3,17 +3,12 @@
 I am designing and implementing lattice genomes for exploratory studies into genome folding. As lattice genomes are computationally quite light, they are perfect for use in education (i.e. on older computers and not-so-powerful laptops).
 
 
-# EXAMPLES
+## EXAMPLE USAGE
 
   python lattice_genome.py -c simple_config.json
 
 
-# LOOPS
-
-The variant 'lattice_genome_loops.py' enables the use of enhancer monomers to explore loop formation via enhancer interactions.
-
-
-# FUTURE WORK
+## FUTURE WORK
 
 Short-listed:
 
