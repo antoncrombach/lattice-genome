@@ -1,8 +1,8 @@
 {
-    "end_time": 20000,
-    "observe_time": 100,
+    "end_time": 200000,
+    "observe_time": 1000,
     "random_seed": 18,
-    "temperature": 5.75,
+    "temperature": 7.5,
     "genome": [        
         {"type": "neutral"},
         {"type": "neutral"},
