@@ -76,6 +76,9 @@ NeutralElement = collections.namedtuple('NeutralElement', [])
 TranscribedElement = collections.namedtuple('TranscribedElement', [])
 EnhancerElement = collections.namedtuple('EnhancerElement', [])
 
+EnhancerAElement = collections.namedtuple('EnhancerElement', [])
+EnhancerBElement = collections.namedtuple('EnhancerElement', [])
+
 
 class LatticeGenome(object):
     """Self-avoiding polymer genome on lattice."""
@@ -110,6 +113,8 @@ class LatticeGenome(object):
         self.polymer = []
         self.positions = []
 
+        if options.verbose:
+            print("# Reading genome...")
         try:
             for elm in conf['genome']:
                 # Each element has a type, and may have a two-dimensional (xy) 
@@ -141,6 +146,22 @@ class LatticeGenome(object):
                     except KeyError:
                         pass
 
+                elif elm['type'] == 'enhancera':
+                    self.polymer.append(EnhancerAElement())
+                    try:
+                        self.positions.append(
+                            [int(elm['x']), int(elm['y'])])
+                    except KeyError:
+                        pass
+                    
+                elif elm['type'] == 'enhancerb':
+                    self.polymer.append(EnhancerBElement())
+                    try:
+                        self.positions.append(
+                            [int(elm['x']), int(elm['y'])])
+                    except KeyError:
+                        pass
+
         except KeyError:
             print('EE Incorrect genome, perhaps unknown element')
 
@@ -154,7 +175,10 @@ class LatticeGenome(object):
         # AC: Using list comprehension to find indices of all enhancers
         self._chain_position_enhancer = set(
             [i for i,e in enumerate(self.polymer) 
-                if type(e) == type(EnhancerElement())])
+                if type(e).__name__.lower().startswith('enhancer')])
+        if options.verbose:
+            print("# Found {} enhancer(s) in the genome.".format(
+                len(self._chain_position_enhancer)))
         # Original code:
         # for i in range(len(self._polymer)):
         #     if type(self._polymer[i]) == type(EnhancerElement()):
@@ -320,18 +344,17 @@ class LatticeGenome(object):
             p, nbs = pnbs
             if i in self._chain_position_enhancer:
                 for j in nbs:
-                    if j != i:
-                        if j in self._chain_position_enhancer:
+                    if j in self._chain_position_enhancer and \
+                        type(self.polymer[j]) != type(self.polymer[i]):
                             energy += DIST_TO_ENERGY_enhancers[
                                 np.sum(np.abs(p - aux_positions[j]))]
-                        else:
-                            energy += DIST_TO_ENERGY_others[
-                                np.sum(np.abs(p - aux_positions[j]))]
-            else:
-                for j in nbs:
-                    if j != i:
+                    else:
                         energy += DIST_TO_ENERGY_others[
                             np.sum(np.abs(p - aux_positions[j]))]
+            else:
+                for j in nbs:
+                    energy += DIST_TO_ENERGY_others[
+                        np.sum(np.abs(p - aux_positions[j]))]
 
         # Done.
         return energy, kdtree
