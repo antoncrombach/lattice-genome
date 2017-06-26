@@ -82,22 +82,14 @@ class LatticeGenome(object):
         # Types of monomer, NeutralElement or TranscribedElement.
         self.polymer = []
         # Positions of monomers on the lattice.
-        self.positions = []
+        self.initial_positions = []
         self._positions_from_file = False
-        # Energy accumulated due to non-adjacent monomers being neighbours
-        self.energy = 0.0
-        # Temperature of world (arguably an attribute of the world, not genome)
-        self.temp = 0.0
-        # Binary tree that keeps track of monomers in space. Used to quickly 
-        # look up neighbours of a given monomer. About 4--5 times faster than
-        # naive all-against-all calculation.
-        self._kdtree = None
 
     def json_decode(self, conf):
         """Build genome from json dict."""
         # Reset polymer and positions to be empty
         self.polymer = []
-        self.positions = []
+        self.initial_positions = []
 
         try:
             for elm in conf['genome']:
@@ -106,7 +98,7 @@ class LatticeGenome(object):
                 if elm['type'] == 'neutral':
                     self.polymer.append(NeutralElement())
                     try:
-                        self.positions.append(
+                        self.initial_positions.append(
                             [int(elm['x']), int(elm['y'])])
                     except KeyError:
                         pass
@@ -114,7 +106,7 @@ class LatticeGenome(object):
                 elif elm['type'] == 'transcribed':
                     self.polymer.append(TranscribedElement())
                     try:
-                        self.positions.append(
+                        self.initial_positions.append(
                             [int(elm['x']), int(elm['y'])])
                     except KeyError:
                         pass
@@ -124,21 +116,17 @@ class LatticeGenome(object):
 
         # I assume we have read all positions if the array is of equal length 
         # as the polymer one. Then, convert positions to np.array
-        if len(self.polymer) == len(self.positions):
-            self.positions = np.array(self.positions)
+        if len(self.polymer) == len(self.initial_positions):
+            self.initial_positions = np.array(self.initial_positions)
             self._positions_from_file = True
 
-        try:
-            self.temp = conf['temperature']
-        except KeyError:
-            print('EE Missing temperature.')
-
     def json_encode(self):
-        """Write genome to json dict."""
+        """
+        Write genome to json dict.
+        """
         result = {}
         result['genome'] = [
-            {'type': type(e).__name__[0:-7].lower(), 'x': p[0], 'y': p[1]}
-                for e,p in zip(self.polymer, self.positions)]
+            {'type': type(e).__name__[0:-7].lower()} for e in self.polymer]
         result['temperature'] = self.temp
         return result
 
@@ -152,7 +140,7 @@ class LatticeGenome(object):
     def has_positions_from_file(self):
         return self._positions_from_file
 
-    def initial_positions(self):
+    def random_initial_positions(self):
         """
         Set initial position of each of the monomers. Default is a random 
         configuration.
@@ -174,16 +162,133 @@ class LatticeGenome(object):
             directions.append(__next_direction(directions[-1]))
 
         # Input to cumsum is a list, returns a numpy array
-        self.positions = np.cumsum(directions, axis=0)
+        self.initial_positions = np.cumsum(directions, axis=0)
 
-    def initial_energy(self):
-        """
-        Energy of a polymer is sum of contact energy between not-nearest
-        neighbours.
-        """
-        self.energy, self._kdtree = self.__calculate_energy(self.positions)
+    def __len__(self):
+        return len(self.polymer)
 
-    def step(self):
+    def __str__(self):
+        return "-".join(self.get_polymer_types_abbreviated())
+
+
+class World(object):
+    """
+    A simplified nuclear environment. Currently, the nucleus is a lattice with 
+    two particles, namely the genome and a transcription factory. In general, 
+    particles are composed of one or more sites on a grid. Energy levels and 
+    what "move" happens next, is computed from the grid sites associated to an 
+    object.
+
+    There are two approaches to implement the grid and its particles:
+
+    1. Explicitly store the lattice as a 2D integer array, where each site has 
+       an integer (unique?) which in turn refers to a monomer, a component of 
+       the transcription factory, or another component. Next, a dictionary maps
+       integers to particles.
+
+    (+) After an initial scan of the entire grid and calculating the starting 
+        energy of the system, all updates are local --- which is fast.
+    (+) The two monomer moves are local and easy to perform. 
+    (-) Adding more complex (non-local) moves is difficult (e.g. rotations of
+        parts of the polymer). Perhaps they are easier if we let go of the rule
+        that all monomers are in the von Neuman neighbourhood (n, s, e, w).
+    (-) If the ratio occupied/empty is low, many random site updates will not 
+        do anything (i.e. wasting random numbers).
+
+    2. Store object configuration on the lattice as a list of sites. We need 
+       to keep track of which list intervals refer to which object -- 
+       similarly to the dict mapping of (1).
+
+    (+) Easily converted to a more continuous approach.
+    (+) Different "moves", even exotic ones, are relatively easy.
+    (-) KDTree (rebuilding) needed to speed up finding of neighbours locally.
+    (-) Calculating energy is a global affair.
+
+    The main issue with using a lattice is that single monomer bonds are immutable -- unless I loosen that constraint --- which hampers the polymers flexibility. Are there alternative schemes that allow a more flexible polymer embedded on a lattice?
+    """
+    def __init__(self):
+        self.end_time = 100
+        self.stats_time = 10
+
+        self.genome = None
+        self.transcription_factory = None
+
+        # List of positions on the lattice taken by genome, transcription 
+        # factory, or some other particle.
+        self.positions = []
+        # Energy accumulated in the entire system
+        self.energy = 0.0
+        # Temperature of world
+        self.temp = 0.0
+        # Binary tree that keeps track of monomers and other elements in 
+        # space. Used to quickly look up neighbours. About 4--5 times faster 
+        # than naive all-against-all calculation.
+        self._kdtree = None
+
+
+    def json_decode(self, conf):
+        """Read in simulation parameters."""
+        try:
+            self.end_time = conf['end_time']
+            self.stats_time = conf['observe_time']
+        except KeyError:
+            print("EE Missing time.")
+
+        try:
+            tfac = conf['transcription_factory']
+            self.transcription_factory = (tfac['x'], tfac['y'], tfac['radius'])
+        except KeyError:
+            print("WW Missing transcription factory.")
+
+        try:
+            self.temp = conf['temperature']
+        except KeyError:
+            print('EE Missing temperature.')
+
+        # Read in interactions, if combinations are missing we take them to
+        # be like neutral vs. neutral (if that one is missing, an error is
+        # flagged).
+        try:
+            self.interactions = conf['interactions']
+            print("# Iactions:", self.interactions)
+        except KeyError:
+            print("WW Interactions not defined properly.")
+
+    def json_encode(self):
+        """Write simulation parameters to dict."""
+        return {
+            'end_time': self.end_time,
+            'observe_time': self.stats_time
+            }
+
+    def add_genome(self, genome):
+        """Add genome particle, a polymer."""
+        self.genome = genome
+        # If it does not have an initial position yet, generate one.
+        if not self.genome.has_positions_from_file():
+            self.genome.random_initial_positions()
+        # Register the particle
+        self.positions = self.genome.initial_positions
+
+    def simulate(self, observers):
+        """Monte Carlo simulation algorithm."""
+        # Prepare simulation
+        time = 0
+        self.energy, self._kdtree = self.__calculate_energy(
+            self.positions)
+
+        # And go
+        while time < self.end_time:
+            # Output statistics
+            if time % self.stats_time == 0:
+                observers.observe(time, self)
+            
+            # A single simulation step is defined as to attempt to "move" each
+            # element of the simulation. (At the moment only the genome.)
+            self.step(time)
+            time += 1
+
+    def step(self, time_step):
         """
         Accept attempt if it lowers the energy or simply by chance using 
         an exponential distribution.
@@ -196,16 +301,6 @@ class LatticeGenome(object):
             self.energy = new_energy
             self._kdtree = new_tree
 
-    def translate_to_origin(self):
-        """
-        Calculate centre of mass and shift all positions to have centre at 
-        the origin (0,0).
-        """
-        # Watch out, integer division!
-        centroid = np.sum(self.positions, axis=0) // len(self.positions)
-        # Translate all points.
-        self.positions -= centroid
-
     def __attempt(self):
         """
         Make a "move" on a copy of the polymer. Two possible moves are defined:
@@ -213,24 +308,25 @@ class LatticeGenome(object):
 
         This is the so-called Mover set 1 (MS1) of Chan & Dill 1993, 1994.
         """
-        positions = np.copy(self.positions)
+        aux_positions = np.copy(self.positions)
         # Pick a monomer
-        idx = npr.randint(len(positions))
+        idx = npr.randint(len(aux_positions))
 
         # End points wiggle
         if idx == 0:
-            positions[0] = self.__neighbour(positions[1])
-        elif idx == len(positions) - 1:
-            positions[-1] = self.__neighbour(positions[-2])
+            aux_positions[0] = self.__neighbour(aux_positions[1])
+        elif idx == len(aux_positions) - 1:
+            aux_positions[-1] = self.__neighbour(aux_positions[-2])
         else:
             # Is the monomer in a 90 degree turn?
-            turn = (positions[idx-1] + positions[idx+1]) - 2 * positions[idx]
+            turn = (aux_positions[idx-1] + aux_positions[idx+1]) \
+                    - 2 * aux_positions[idx]
             # Check if x and y are unequal to zero
             if np.all(turn != 0):
-                positions[idx] += turn
+                aux_positions[idx] += turn
 
-        energy, tree = self.__calculate_energy(positions)
-        return positions, energy, tree
+        energy, tree = self.__calculate_energy(aux_positions)
+        return aux_positions, energy, tree
 
     def __neighbour(self, xy):
         """Return one of four possible neighbours."""
@@ -276,103 +372,6 @@ class LatticeGenome(object):
         # Done.
         return energy, kdtree
 
-    def __len__(self):
-        return len(self.polymer)
-
-    def __str__(self):
-        return "-".join(self.get_polymer_types_abbreviated())
-
-
-class World(object):
-    """
-    A simplified nuclear environment. Currently, the nucleus is a lattice with 
-    two objects, namely the genome and a transcription factory. In general, 
-    objects are composed of one or more sites on a grid. Energy levels and 
-    what "move" happens next, is computed from the grid sites associated to an 
-    object.
-
-    There are two approaches to implement the grid and its objects:
-
-    1. Explicitly store the lattice as a 2D integer array, where each site has 
-       an integer (unique?) which in turn refers to a monomer, a component of 
-       the transcription factory, or another component. Next, a dictionary maps
-       integers to objects.
-
-    (+) After an initial scan of the entire grid and calculating the starting 
-        energy of the system, all updates are local --- which is fast.
-    (+) The two monomer moves are local and easy to perform. 
-    (-) Adding more complex (non-local) moves is difficult (e.g. rotations of
-        parts of the polymer). Perhaps they are easier if we let go of the rule
-        that all monomers are in the von Neuman neighbourhood (n, s, e, w).
-    (-) If the ratio occupied/empty is low, many random site updates will not 
-        do anything (i.e. wasting random numbers).
-
-    2. Store object configuration on the lattice as a list of sites. We need 
-       to keep track of which list intervals refer to which object -- 
-       similarly to the dict mapping of (1).
-
-    (+) Easily converted to a more continuous approach.
-    (+) Different "moves", even exotic ones, are relatively easy.
-    (-) KDTree (rebuilding) needed to speed up finding of neighbours locally.
-    (-) Calculating energy is a global affair.
-
-    The main issue with using a lattice is that single monomer bonds are immutable -- unless I loosen that constraint --- which hampers the polymers flexibility. Are there alternative schemes that allow a more flexible polymer embedded on a lattice?
-    """
-    def __init__(self):
-        self.end_time = 100
-        self.stats_time = 10
-        self._translate_time = np.max([1000, int(self.end_time / 100)])
-
-        self.genome = None
-        self.transcription_factory = None
-
-    def json_decode(self, conf):
-        """Read in simulation parameters."""
-        try:
-            self.end_time = conf['end_time']
-            self.stats_time = conf['observe_time']
-        except KeyError:
-            print("EE Missing time.")
-
-        try:
-            tfactory = conf['world']['transcription_factory']
-            self.transcription_factory = (tfactory['x'], tfactory['y'])
-        except KeyError:
-            print("WW Missing transcription factory.")
-
-    def json_encode(self):
-        """Write simulation parameters to dict."""
-        return {
-            'end_time': self.end_time,
-            'observe_time': self.stats_time
-            }
-
-    def add_genome(self, genome):
-        self.genome = genome
-        if not self.genome.has_positions_from_file():
-            self.genome.initial_positions()
-        self.genome.initial_energy()
-
-    def simulate(self, observers):
-        """Monte Carlo simulation algorithm."""
-        time = 0
-        while time < self.end_time:
-            # Output statistics
-            if time % self.stats_time == 0:
-                observers.observe(time, self)
-            
-            # A single simulation step is defined as to attempt to "move" each
-            # element of the simulation. (At the moment only the genome.)
-            self.__step(time)
-            time += 1
-
-    def __step(self, time):
-        """Attempt to change world..."""
-        self.genome.step()
-        if time % self._translate_time == 0:
-            self.genome.translate_to_origin()
-        # transcription factory does not do anything
-
 
 class Observers(object):
     """Observer manager."""
@@ -414,8 +413,8 @@ class Observers(object):
         their statistics.
         """
         # Get polymer data, first energy then positions
-        en = world.genome.energy
-        xy = world.genome.positions
+        en = world.energy
+        xy = world.positions
 
         # Store positions for writing to file later
         self.polymer_positions[time_step] = np.copy(xy)
@@ -611,12 +610,12 @@ def main():
     w.simulate(o)
     # If you do not want the plot window to close immediately, uncomment 
     # the two lines below.
-    print("# Giving you some time to enjoy the plots...")
-    # Wait for given number of seconds
-    time.sleep(60)
+    # print("# Giving you some time to enjoy the plots...")
+    # # Wait for given number of seconds
+    # time.sleep(60)
 
     # Write out simulation results
-    write_simulation_results(options, conf, w, o)
+    # write_simulation_results(options, conf, w, o)
     # End of the simulation
 
 

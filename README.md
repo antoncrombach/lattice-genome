@@ -15,14 +15,7 @@ The variant 'lattice_genome_loops.py' enables the use of enhancer monomers to ex
 
 # FUTURE WORK
 
-- contact matrix
-- time vs long range interactions
-
 Also known as the to-do list:
-
-- Move positions from LatticeGenome to World.
-- Move step and attempt from LatticeGenome to World.
-- Move energy calculation from LatticeGenome to World.
 
 - Create World matrix to define the pairwise energy of elements.
 - Create transcription factory object.
