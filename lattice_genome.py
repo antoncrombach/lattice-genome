@@ -59,6 +59,7 @@ import matplotlib.pyplot as plt
 #
 # RGBa (red, green, blue, alpha) for the polymer line
 POLYMER_BLUE = (0.125, 0.469, 0.707, 0.400)
+TFACTORY_BLACK = (0.100, 0.050, 0.050, 0.700)
 
 # Colour map, consisting of blue (n) and orange (t), both with 60% transparency
 MONOMER_COLOUR_MAP = {
@@ -171,6 +172,38 @@ class LatticeGenome(object):
         return "-".join(self.get_polymer_types_abbreviated())
 
 
+class TranscriptionFactory(object):
+    """
+    A transcription factory is a membrane-less organelle in the nucleus
+    that concentrates RNA polymerase, splicing machinery, transcription factors
+    and other components.
+
+    Here it is simply a big circle (default radius 3) that has affinity for 
+    transcribed regions of the genome.
+    """
+    def __init__(self):
+        # Positions of monomers on the lattice.
+        self.center = (0, 0)
+        self.radius = 3
+        self.initial_positions = []
+        self._positions_from_file = False
+
+    def json_decode(self, conf):
+        """Read in configuration."""
+        try:
+            tfac = conf['transcription_factory']
+            self.center = (tfac['x'], tfac['y'])
+            self.radius = tfac['radius']
+        except KeyError:
+            print("WW Missing transcription factory.")
+
+    def random_initial_positions(self):
+        """Generate a discretized circle."""
+        x, y = np.mgrid[-self.radius:self.radius+1, -self.radius:self.radius+1]
+        circle = x**2 + y**2 < self.radius**2
+        self.initial_positions = x[circle], y[circle]
+
+
 class World(object):
     """
     A simplified nuclear environment. Currently, the nucleus is a lattice with 
@@ -220,6 +253,9 @@ class World(object):
         self.energy = 0.0
         # Temperature of world
         self.temp = 0.0
+        # Mapping interactions between particles to energy
+        self.interactions = {}
+
         # Binary tree that keeps track of monomers and other elements in 
         # space. Used to quickly look up neighbours. About 4--5 times faster 
         # than naive all-against-all calculation.
@@ -235,12 +271,6 @@ class World(object):
             print("EE Missing time.")
 
         try:
-            tfac = conf['transcription_factory']
-            self.transcription_factory = (tfac['x'], tfac['y'], tfac['radius'])
-        except KeyError:
-            print("WW Missing transcription factory.")
-
-        try:
             self.temp = conf['temperature']
         except KeyError:
             print('EE Missing temperature.')
@@ -249,8 +279,9 @@ class World(object):
         # be like neutral vs. neutral (if that one is missing, an error is
         # flagged).
         try:
-            self.interactions = conf['interactions']
-            print("# Iactions:", self.interactions)
+            for iaction in conf['interactions']:
+                self.interactions[(iaction['first'], iaction['second'])] = \
+                    np.array(iaction['distance_to_energy'])
         except KeyError:
             print("WW Interactions not defined properly.")
 
@@ -268,7 +299,16 @@ class World(object):
         if not self.genome.has_positions_from_file():
             self.genome.random_initial_positions()
         # Register the particle
-        self.positions = self.genome.initial_positions
+        self.positions.extend(self.genome.initial_positions)
+
+    def add_transcription_factory(self, factory):
+        """Add transcription factory particle, a big circle."""
+        self.transcription_factory = factory
+        # Factory by definition does not have an initial position yet.
+        # Let's generate one
+        self.transcription_factory.random_initial_positions()
+        # Register the particle
+        self.positions.extend(self.transcription_factory.initial_positions)
 
     def simulate(self, observers):
         """Monte Carlo simulation algorithm."""
@@ -346,9 +386,10 @@ class World(object):
         - 0.1: monomers are diagonally close.
 
         These energy levels should lead to polymers that become elongated.
-        """
-        DIST_TO_ENERGY = [10, 1, 0.1]
 
+        NEW: distance to energy is now defined in the configuration file, and
+        accessed through the `interactions' attribute.
+        """
         # Start with zero energy.
         energy = 0
         
@@ -365,10 +406,21 @@ class World(object):
             p, nbs = pnbs
             # Neighbour distance {0, 1, .., 4} to energy = {10, 1, 0.1} etc. 
             # j is the index to a neighbour, whose position we retreive 
-            energy += np.sum(
-                [DIST_TO_ENERGY[e] for e in np.sum(np.array(
-                    [np.abs(p - aux_positions[j]) for j in nbs if i != j]), 
-                        axis=1)])
+            for j in nbs:
+                if i != j:
+                    first = type(self.genome.polymer[i]).__name__[:-7].lower()
+                    second = type(self.genome.polymer[j]).__name__[:-7].lower()
+                    try:
+                        energy += self.interactions[(first, second)][
+                            np.sum(np.abs(p - aux_positions[j]))]
+                    except KeyError:
+                        energy += self.interactions[("neutral", "neutral")][
+                            np.sum(np.abs(p - aux_positions[j]))]
+                        
+            # energy += np.sum(
+            #     [DIST_TO_ENERGY[e] for e in np.sum(np.array(
+            #         [np.abs(p - aux_positions[j]) for j in nbs if i != j]), 
+            #             axis=1)])
         # Done.
         return energy, kdtree
 
@@ -597,10 +649,15 @@ def main():
     out = "# Simulating a polymer genome of length {0}\n".format(len(g))
     print(out)
 
+    # Build a transcription factory
+    f = TranscriptionFactory()
+    f.json_decode(conf)
+
     # Build the molecular world in which the genome is placed
     w = World()
     w.json_decode(conf)
     w.add_genome(g)
+    w.add_transcription_factory(f)
 
     # Set up which statistics to compute during simulation
     o = Observers()

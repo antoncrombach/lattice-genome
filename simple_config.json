@@ -58,7 +58,7 @@
     "transcription_factory": {
         "x": 0,
         "y": 0,
-        "radius": 3
+        "radius": 2
     },
     "interactions": [
         {"first": "neutral", "second": "neutral", 
