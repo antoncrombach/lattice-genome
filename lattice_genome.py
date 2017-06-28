@@ -43,6 +43,7 @@ import traceback
 import optparse
 import time
 import collections
+import bisect
 
 # JSON is the file format for reading the configuration and writing results
 import simplejson as json
@@ -126,9 +127,8 @@ class LatticeGenome(object):
         Write genome to json dict.
         """
         result = {}
-        result['genome'] = [
-            {'type': type(e).__name__[0:-7].lower()} for e in self.polymer]
-        result['temperature'] = self.temp
+        result['genome'] = [{'type': type(e).__name__[0:-7].lower()} 
+            for e in self.polymer]
         return result
 
     def get_polymer_types_abbreviated(self):
@@ -165,6 +165,40 @@ class LatticeGenome(object):
         # Input to cumsum is a list, returns a numpy array
         self.initial_positions = np.cumsum(directions, axis=0)
 
+    def attempt(self, positions):
+        """
+        Make a "move" on a copy of the polymer. Two possible moves are defined:
+        the end-points can wiggle 90 degrees, and a turn can flip-flop.
+
+        This is the so-called Mover set 1 (MS1) of Chan & Dill 1993, 1994.
+        """
+        aux_positions = np.copy(positions)
+        # Pick a monomer
+        idx = npr.randint(len(aux_positions))
+
+        # End points wiggle
+        if idx == 0:
+            aux_positions[0] = self.__neighbour(aux_positions[1])
+        elif idx == len(aux_positions) - 1:
+            aux_positions[-1] = self.__neighbour(aux_positions[-2])
+        else:
+            # Is the monomer in a 90 degree turn?
+            turn = (aux_positions[idx-1] + aux_positions[idx+1]) \
+                    - 2 * aux_positions[idx]
+            # Check if x and y are unequal to zero
+            if np.all(turn != 0):
+                aux_positions[idx] += turn
+
+        return aux_positions
+
+    def __neighbour(self, xy):
+        """Return one of four possible neighbours."""
+        offset = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
+        return xy + offset[npr.randint(len(offset))]
+
+    def element_type(self, idx):
+        return type(self.polymer[idx]).__name__[:-7].lower()
+
     def __len__(self):
         return len(self.polymer)
 
@@ -197,11 +231,26 @@ class TranscriptionFactory(object):
         except KeyError:
             print("WW Missing transcription factory.")
 
+    def json_encode(self):
+        """Return a dictionary that is automatically converted into json."""
+        return { 'x': self.center[0],
+                 'y': self.center[1],
+                 'radius': self.radius}
+
     def random_initial_positions(self):
         """Generate a discretized circle."""
         x, y = np.mgrid[-self.radius:self.radius+1, -self.radius:self.radius+1]
         circle = x**2 + y**2 < self.radius**2
-        self.initial_positions = x[circle], y[circle]
+        self.initial_positions = np.stack((x[circle], y[circle]), axis=1)
+
+    def element_type(self, idx):
+        return "transcription_factory"
+
+    def __len__(self):
+        return len(self.initial_positions)
+
+    def __str__(self):
+        return "tfactory"
 
 
 class World(object):
@@ -249,6 +298,8 @@ class World(object):
         # List of positions on the lattice taken by genome, transcription 
         # factory, or some other particle.
         self.positions = []
+        self.particles = None
+        self.weights = None
         # Energy accumulated in the entire system
         self.energy = 0.0
         # Temperature of world
@@ -289,7 +340,12 @@ class World(object):
         """Write simulation parameters to dict."""
         return {
             'end_time': self.end_time,
-            'observe_time': self.stats_time
+            'observe_time': self.stats_time,
+            'interactions': [{
+                "first": k[0], 
+                "second": k[1], 
+                "distance_to_energy": v.tolist()}
+                for k, v in self.interactions.iteritems()]
             }
 
     def add_genome(self, genome):
@@ -298,8 +354,6 @@ class World(object):
         # If it does not have an initial position yet, generate one.
         if not self.genome.has_positions_from_file():
             self.genome.random_initial_positions()
-        # Register the particle
-        self.positions.extend(self.genome.initial_positions)
 
     def add_transcription_factory(self, factory):
         """Add transcription factory particle, a big circle."""
@@ -307,15 +361,20 @@ class World(object):
         # Factory by definition does not have an initial position yet.
         # Let's generate one
         self.transcription_factory.random_initial_positions()
-        # Register the particle
-        self.positions.extend(self.transcription_factory.initial_positions)
+
+    def prepare(self):
+        """Prepare simulation."""
+        self.particles = [self.genome, self.transcription_factory]
+        self.weights = np.cumsum([len(p) for p in self.particles])
+        self.positions = np.concatenate((self.genome.initial_positions, 
+            self.transcription_factory.initial_positions))
+        self.energy, self._kdtree = self.__calculate_energy(
+            self.positions)
 
     def simulate(self, observers):
         """Monte Carlo simulation algorithm."""
-        # Prepare simulation
         time = 0
-        self.energy, self._kdtree = self.__calculate_energy(
-            self.positions)
+        self.prepare()
 
         # And go
         while time < self.end_time:
@@ -333,7 +392,7 @@ class World(object):
         Accept attempt if it lowers the energy or simply by chance using 
         an exponential distribution.
         """
-        new_positions, new_energy, new_tree = self.__attempt()
+        new_positions, new_energy, new_tree = self.attempt()
         delta_e = new_energy - self.energy
         if delta_e < 0.0 or npr.random() <= np.exp(-(delta_e / self.temp)):
             # Biased acceptance of attempts
@@ -341,37 +400,28 @@ class World(object):
             self.energy = new_energy
             self._kdtree = new_tree
 
-    def __attempt(self):
+    def attempt(self):
         """
-        Make a "move" on a copy of the polymer. Two possible moves are defined:
-        the end-points can wiggle 90 degrees, and a turn can flip-flop.
-
-        This is the so-called Mover set 1 (MS1) of Chan & Dill 1993, 1994.
+        Choose a particle and let it do an attempt. Currently, choosing a 
+        particle is easy, as only the genome moves.
         """
-        aux_positions = np.copy(self.positions)
-        # Pick a monomer
-        idx = npr.randint(len(aux_positions))
+        new_genome_positions = self.genome.attempt(
+            self.positions[0:self.weights[0]])
 
-        # End points wiggle
-        if idx == 0:
-            aux_positions[0] = self.__neighbour(aux_positions[1])
-        elif idx == len(aux_positions) - 1:
-            aux_positions[-1] = self.__neighbour(aux_positions[-2])
-        else:
-            # Is the monomer in a 90 degree turn?
-            turn = (aux_positions[idx-1] + aux_positions[idx+1]) \
-                    - 2 * aux_positions[idx]
-            # Check if x and y are unequal to zero
-            if np.all(turn != 0):
-                aux_positions[idx] += turn
+        # Get all positions together to calculate energy
+        aux_positions = np.concatenate((new_genome_positions, 
+            self.transcription_factory.initial_positions))
 
         energy, tree = self.__calculate_energy(aux_positions)
         return aux_positions, energy, tree
 
-    def __neighbour(self, xy):
-        """Return one of four possible neighbours."""
-        offset = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
-        return xy + offset[npr.randint(len(offset))]
+    def genome_positions(self):
+        """Return only positions of the polymer genome."""
+        return self.positions[0:self.weights[0]]
+
+    def transcription_factory_positions(self):
+        """Return positions of the tfactory."""
+        return self.positions[self.weights[0]:]
 
     def __calculate_energy(self, aux_positions):
         """
@@ -399,17 +449,27 @@ class World(object):
             balanced_tree=False)
         neighbours = kdtree.query_ball_point(aux_positions, 2, p=1.0)
         
-        # Iterate all monomers and their lists of neighbours
+        # Iterate all elements of particles and their lists of neighbours
         for i, pnbs  in enumerate(zip(aux_positions, neighbours)):
-            # p is the current monomer, nbs is a list of its neighbours (these
-            # are indices to monomers in aux_positions)
+            # p is the current element, nbs is a list of its neighbours (these
+            # are indices to elements in aux_positions)
             p, nbs = pnbs
             # Neighbour distance {0, 1, .., 4} to energy = {10, 1, 0.1} etc. 
             # j is the index to a neighbour, whose position we retreive 
             for j in nbs:
                 if i != j:
-                    first = type(self.genome.polymer[i]).__name__[:-7].lower()
-                    second = type(self.genome.polymer[j]).__name__[:-7].lower()
+                    # Which particle do the indices belong to?
+                    pi = bisect.bisect(self.weights, i)
+                    pj = bisect.bisect(self.weights, j)
+
+                    # Which element (type of monomer) do the indices refer to?
+                    offset_i = self.weights[pi-1] if pi > 0 else 0
+                    offset_j = self.weights[pj-1] if pj > 0 else 0
+                    # print(self.weights, 'i', i, pi, offset_i, 'j', j, pj, offset_j)
+                    first = self.particles[pi].element_type(i - offset_i)
+                    second = self.particles[pj].element_type(j - offset_j)
+
+                    # Calculate energy of interaction
                     try:
                         energy += self.interactions[(first, second)][
                             np.sum(np.abs(p - aux_positions[j]))]
@@ -417,10 +477,6 @@ class World(object):
                         energy += self.interactions[("neutral", "neutral")][
                             np.sum(np.abs(p - aux_positions[j]))]
                         
-            # energy += np.sum(
-            #     [DIST_TO_ENERGY[e] for e in np.sum(np.array(
-            #         [np.abs(p - aux_positions[j]) for j in nbs if i != j]), 
-            #             axis=1)])
         # Done.
         return energy, kdtree
 
@@ -435,6 +491,7 @@ class Observers(object):
         # Polymer line segments and monomer positions
         self.polymer_line = None
         self._monomers = None
+        self._tfactory = None
         # Energy over time line, with a label tracking the latest energy
         self._energy_line = None
         self._energy_label = None
@@ -466,7 +523,8 @@ class Observers(object):
         """
         # Get polymer data, first energy then positions
         en = world.energy
-        xy = world.positions
+        xy = world.genome_positions()
+        tf = world.transcription_factory_positions()
 
         # Store positions for writing to file later
         self.polymer_positions[time_step] = np.copy(xy)
@@ -474,6 +532,7 @@ class Observers(object):
         # Reshape into sequence of line segments [[(x0,y0),(x1,y1)],...]
         xy = xy.reshape(-1, 1, 2)
         segments = np.hstack([xy[:-1], xy[1:]])
+        tf = tf.reshape(-1, 1, 2)
 
         if self._first:
             # Set up visualization only once
@@ -481,7 +540,7 @@ class Observers(object):
             self._fig, self._axs = plt.subplots(nrows=2, ncols=1)
 
             # Axis 0: 2D polymer conformation
-            self.__prepare_polymer_plot(time_step, world, xy, segments)
+            self.__prepare_polymer_plot(time_step, world, xy, segments, tf)
 
             # Axis 1: energy of the polymer over time
             self.__prepare_energy_plot(time_step, en)
@@ -502,17 +561,21 @@ class Observers(object):
         """Quick check if we have anything to write to disk."""
         return self.polymer_positions_fname
 
-    def __prepare_polymer_plot(self, time_step, world, xy, segments):
+    def __prepare_polymer_plot(self, time_step, world, xy, segments, tf):
         """Prepare polymer line and monomers."""
         # The polymer with its monomers is built from lines and polygons
         self.polymer_line = mpl.collections.LineCollection(segments)
         self.polymer_line.set_color(POLYMER_BLUE)
 
-        self._monomers = mpl.collections.RegularPolyCollection(4, 
-            sizes=[10.0 for _ in xy], offsets=xy, 
+        self._monomers = mpl.collections.RegularPolyCollection(8, 
+            sizes=[8.0 for _ in xy], offsets=xy, 
             transOffset=self._axs[0].transData)
         trans = mpl.transforms.Affine2D().scale(self._fig.dpi/72.0)
         self._monomers.set_transform(trans)
+
+        self._tfactory = mpl.collections.RegularPolyCollection(5, 
+            sizes=[10.0 for _ in tf], offsets=tf,
+            transOffset=self._axs[0].transData)
 
         # Different monomers have different colours
         pt = world.genome.get_polymer_types_abbreviated()
@@ -520,8 +583,13 @@ class Observers(object):
         self._monomers.set_facecolor(pc)
         self._monomers.set_edgecolor(pc)
 
+        # Transcription factory is black
+        self._tfactory.set_facecolor(TFACTORY_BLACK)
+        self._tfactory.set_edgecolor(TFACTORY_BLACK)
+
         self._axs[0].add_collection(self.polymer_line)
         self._axs[0].add_collection(self._monomers)
+        self._axs[0].add_collection(self._tfactory)
 
         # Make the plot pretty, no annoying tick or their labels
         lim = (-15, 15)
@@ -667,12 +735,12 @@ def main():
     w.simulate(o)
     # If you do not want the plot window to close immediately, uncomment 
     # the two lines below.
-    # print("# Giving you some time to enjoy the plots...")
-    # # Wait for given number of seconds
-    # time.sleep(60)
+    print("# Giving you some time to enjoy the plots...")
+    # Wait for given number of seconds
+    time.sleep(60)
 
     # Write out simulation results
-    # write_simulation_results(options, conf, w, o)
+    write_simulation_results(options, conf, w, o)
     # End of the simulation
 
 

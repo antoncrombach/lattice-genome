@@ -1,8 +1,8 @@
 {
-    "end_time": 10000,
+    "end_time": 200,
     "observe_time": 100,
     "random_seed": 18,
-    "temperature": 5.5,
+    "temperature": 5.75,
     "genome": [        
         {"type": "neutral"},
         {"type": "neutral"},
@@ -56,15 +56,15 @@
         {"type": "neutral"}
     ],
     "transcription_factory": {
-        "x": 0,
-        "y": 0,
+        "x": 3,
+        "y": 3,
         "radius": 2
     },
     "interactions": [
         {"first": "neutral", "second": "neutral", 
             "distance_to_energy": [10.0, 1.0, 0.1]},
         {"first": "transcribed", "second": "transcription_factory", 
-            "distance_to_energy": [-20.0, -2.0, 0.2]}
+            "distance_to_energy": [5.0, -5.0, -1.0]}
     ],
     "observers": {
         "polymer_positions": "pol_pos.json"

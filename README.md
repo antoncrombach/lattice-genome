@@ -12,7 +12,4 @@ I am designing and implementing lattice genomes for exploratory studies into gen
 
 Also known as the to-do list:
 
-- Adjust step and attempt to include interactions between the factory and the
-  polymer chain.
-
-- Observers should be split up in different observers.
+- Observers should be split up.
