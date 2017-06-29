@@ -79,8 +79,8 @@ TranscribedElement = collections.namedtuple('TranscribedElement', [])
 EnhancerElement = collections.namedtuple('EnhancerElement', [])
 
 # Additional enhancer elements
-EnhancerAElement = collections.namedtuple('EnhancerElement', [])
-EnhancerBElement = collections.namedtuple('EnhancerElement', [])
+Enhancer_AElement = collections.namedtuple('Enhancer_AElement', [])
+Enhancer_BElement = collections.namedtuple('Enhancer_BElement', [])
 
 
 class LatticeGenome(object):
@@ -140,7 +140,7 @@ class LatticeGenome(object):
                         pass
 
                 elif elm['type'] == 'enhancer_a':
-                    self.polymer.append(EnhancerAElement())
+                    self.polymer.append(Enhancer_AElement())
                     try:
                         self.initial_positions.append(
                             [int(elm['x']), int(elm['y'])])
@@ -148,7 +148,7 @@ class LatticeGenome(object):
                         pass
                     
                 elif elm['type'] == 'enhancer_b':
-                    self.polymer.append(EnhancerBElement())
+                    self.polymer.append(Enhancer_BElement())
                     try:
                         self.initial_positions.append(
                             [int(elm['x']), int(elm['y'])])
@@ -393,7 +393,10 @@ class World(object):
         # flagged).
         try:
             for iaction in conf['interactions']:
-                self.interactions[(iaction['first'], iaction['second'])] = \
+                first, second = iaction['first'], iaction['second']
+                if first > second:
+                    first, second = second, first
+                self.interactions[(first, second)] = \
                     np.array(iaction['distance_to_energy'])
         except KeyError:
             print("WW Interactions not defined properly.")
@@ -531,6 +534,10 @@ class World(object):
                     offset_j = self.weights[pj-1] if pj > 0 else 0
                     first = self.particles[pi].element_type(i - offset_i)
                     second = self.particles[pj].element_type(j - offset_j)
+
+                    # Maintain alphabetical ordering of interaction tuple
+                    if first > second:
+                        first, second = second, first
 
                     # Calculate energy of interaction
                     try:
