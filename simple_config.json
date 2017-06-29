@@ -13,11 +13,11 @@
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
-        {"type": "enhancera"},
-        {"type": "enhancera"},
-        {"type": "enhancera"},
-        {"type": "enhancera"},
-        {"type": "enhancera"},
+        {"type": "enhancer_a"},
+        {"type": "enhancer_a"},
+        {"type": "enhancer_a"},
+        {"type": "enhancer_a"},
+        {"type": "enhancer_a"},
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "transcribed"},
@@ -33,11 +33,11 @@
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
-        {"type": "enhancerb"},
-        {"type": "enhancerb"},
-        {"type": "enhancerb"},
-        {"type": "enhancerb"},
-        {"type": "enhancerb"},
+        {"type": "enhancer_b"},
+        {"type": "enhancer_b"},
+        {"type": "enhancer_b"},
+        {"type": "enhancer_b"},
+        {"type": "enhancer_b"},
         {"type": "neutral"},
         {"type": "neutral"},
         {"type": "neutral"},
@@ -68,11 +68,17 @@
         {"type": "neutral"}
     ],
     "transcription_factory": {
-        "x": 0,
-        "y": 0,
-        "radius": 3
+        "x": 3,
+        "y": 3,
+        "radius": 2
     },
+    "interactions": [
+        {"first": "neutral", "second": "neutral", 
+            "distance_to_energy": [10.0, 1.0, 0.1]},
+        {"first": "transcribed", "second": "transcription_factory", 
+            "distance_to_energy": [5.0, -5.0, -1.0]}
+    ],
     "observers": {
-        "polymer_positions": "pol_pos.json"
+        "polymer_positions": "genome_positions.json"
     }
 }

@@ -12,17 +12,9 @@ I am designing and implementing lattice genomes for exploratory studies into gen
 
 Short-listed:
 
-- time vs long range interactions
+- Improve plotting time vs long range interactions
 
-Also known as the to-do list:
+The long to-do list:
 
-- Move positions from LatticeGenome to World.
-- Move step and attempt from LatticeGenome to World.
-- Move energy calculation from LatticeGenome to World.
-
-- Create World matrix to define the pairwise energy of elements.
-- Create transcription factory object.
-- Adjust step and attempt to include interactions between the factory and the
-  polymer chain.
-
-- Observers should be split up in different observers.
+- Observers should be split up.
+- Feedback between transcribed genomic regions and enhancers.
