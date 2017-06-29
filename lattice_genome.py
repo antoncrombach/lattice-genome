@@ -447,7 +447,8 @@ class World(object):
         # a distance measure (1.0 = Manhattan distance).
         kdtree = spsp.cKDTree(aux_positions, compact_nodes=False, 
             balanced_tree=False)
-        neighbours = kdtree.query_ball_point(aux_positions, 2, p=1.0)
+        neighbours = kdtree.query_ball_point(aux_positions, 
+            len(any_elem(self.interactions))-1, p=1.0)
         
         # Iterate all elements of particles and their lists of neighbours
         for i, pnbs  in enumerate(zip(aux_positions, neighbours)):
@@ -465,7 +466,6 @@ class World(object):
                     # Which element (type of monomer) do the indices refer to?
                     offset_i = self.weights[pi-1] if pi > 0 else 0
                     offset_j = self.weights[pj-1] if pj > 0 else 0
-                    # print(self.weights, 'i', i, pi, offset_i, 'j', j, pj, offset_j)
                     first = self.particles[pi].element_type(i - offset_i)
                     second = self.particles[pj].element_type(j - offset_j)
 
@@ -640,6 +640,13 @@ class Observers(object):
 
 
 # Functions
+def any_elem(d):
+    """Return an element from a dictionary or list"""
+    try:
+        return d.itervalues().next()
+    except AttributeError:
+        return d[0]
+
 def read_json_configuration(fname):
     """Read in simulation parameters (in JSON format)."""
     try:

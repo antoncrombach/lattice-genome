@@ -12,4 +12,6 @@ I am designing and implementing lattice genomes for exploratory studies into gen
 
 Also known as the to-do list:
 
+- Merge branch `tfactory' with master.
 - Observers should be split up.
+- Feedback between transcribed areas and enhancers.
