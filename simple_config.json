@@ -1,6 +1,6 @@
 {
-    "end_time": 2000,
-    "observe_time": 200,
+    "end_time": 10000,
+    "observe_time": 100,
     "random_seed": 18,
     "temperature": 6.5,
     "genome": [        
@@ -75,8 +75,10 @@
     "interactions": [
         {"first": "neutral", "second": "neutral", 
             "distance_to_energy": [10.0, 1.0, 0.1]},
+        {"first": "enhancer_a", "second": "enhancer_b", 
+            "distance_to_energy": [-20.0, -2.0, -0.2]},            
         {"first": "transcribed", "second": "transcription_factory", 
-            "distance_to_energy": [5.0, -5.0, -1.0]}
+            "distance_to_energy": [10.0, -5.0, -1.0]}
     ],
     "observers": {
         "polymer_positions": "genome_positions.json"

@@ -2,6 +2,7 @@
 # coding: utf-8
 """
     Copyright (C) 2017  Anton Crombach (anton.crombach@college-de-france.fr)
+                        Alice D'Huillier (lhuillie@magbio.ens.fr)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -89,9 +90,6 @@ class LatticeGenome(object):
         """Set attributes to default values to make sure they exist."""
         # Types of monomer, NeutralElement, TranscribedElm, EnhancerElm.
         self.polymer = []
-        # Auxilary set to keep track of enhancers (which have a different
-        # energy contribution)
-        self._chain_position_enhancer = set([])
         # Initial positions of monomers on the lattice.
         self.initial_positions = []
         self._positions_from_file = False
@@ -164,23 +162,15 @@ class LatticeGenome(object):
             self.initial_positions = np.array(self.initial_positions)
             self._positions_from_file = True
 
-        # Determine where enhancers are, store the indices.
-        # AC: Using list comprehension to find indices of all enhancers
-        self._chain_position_enhancer = set(
-            [i for i,e in enumerate(self.polymer) 
-                if type(e).__name__.lower().startswith('enhancer')])
-        if options.verbose:
-            print("# Found {} enhancer(s) in the genome.".format(
-                len(self._chain_position_enhancer)))
-
-    def json_encode(self):
+    def json_encode(self, positions):
         """Write genome to json dict."""
         # Ecrire les fichier de sortie dans le même format que les fichiers de
         # configuration, pq créer des collections.namedtuple si on l'utilise 
         # en tant que chaîne de caractères, et comment fonctionne la fonction 
         # type (renvoie type au lieu de TranscribedElement par ex).
-        return {'genome': [{'type': type(e).__name__[0:-7].lower()} 
-            for e in self.polymer]}
+        return {'genome': [{
+            'type': type(e).__name__[0:-7].lower(), 'x': xy[0], 'y': xy[1]} 
+                for e, xy in zip(self.polymer, positions)]}
 
     def get_polymer_types_abbreviated(self):
         """
@@ -348,7 +338,10 @@ class World(object):
     (-) KDTree (rebuilding) needed to speed up finding of neighbours locally.
     (-) Calculating energy is a global affair.
 
-    The main issue with using a lattice is that single monomer bonds are immutable -- unless I loosen that constraint --- which hampers the polymers flexibility. Are there alternative schemes that allow a more flexible polymer embedded on a lattice?
+    The main issue with using a lattice is that single monomer bonds are 
+    immutable -- unless I loosen that constraint --- which hampers the 
+    polymers flexibility. Are there alternative schemes that allow a more 
+    flexible polymer embedded on a lattice?
     """
     def __init__(self):
         self.end_time = 100
@@ -406,11 +399,13 @@ class World(object):
         return {
             'end_time': self.end_time,
             'observe_time': self.stats_time,
+            'genome': self.genome.json_encode(self.genome_positions()),
+            'transcription_factory': self.transcription_factory.json_encode(),
             'interactions': [{
                 "first": k[0], 
                 "second": k[1], 
                 "distance_to_energy": v.tolist()}
-                for k, v in self.interactions.iteritems()]
+                    for k, v in self.interactions.iteritems()]
             }
 
     def add_genome(self, genome):
@@ -846,7 +841,6 @@ def write_simulation_results(opt, config, world, observers):
     """
     out_data = {'random_seed': config['random_seed']}
     out_data.update(world.json_encode())
-    out_data.update(world.genome.json_encode())
 
     # Preparing file name
     outfilename = os.path.expanduser(opt.save)
