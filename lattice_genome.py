@@ -219,10 +219,13 @@ class LatticeGenome(object):
 
     def attempt(self, positions):
         """
-        Make a "move" on a copy of the polymer. Two possible moves are defined:
-        the end-points can wiggle 90 degrees, and a turn can flip-flop.
+        Make a "move" on a copy of the polymer. Three possible moves are 
+        defined: the end-points can wiggle 90 degrees, a turn can flip-flop, 
+        and polymer arms can rotate 90 degrees. Of course, not doing any move
+        is also possible.
 
-        This is the so-called Mover set 1 (MS1) of Chan & Dill 1993, 1994.
+        The first two moves are known as Mover set 1 (MS1) of Chan & Dill 
+        1993, 1994. The "large" rotation is part of Mover set 2 (MS2).
         """
         aux_positions = np.copy(positions)
         # Pick a monomer
@@ -234,12 +237,27 @@ class LatticeGenome(object):
         elif idx == len(aux_positions) - 1:
             aux_positions[-1] = self.__neighbour(aux_positions[-2])
         else:
+            # `idx' refers to a monomer that is not an end-point.
+
             # Is the monomer in a 90 degree turn?
             turn = (aux_positions[idx-1] + aux_positions[idx+1]) \
                     - 2 * aux_positions[idx]
-            # Check if x and y are unequal to zero
+            # If x and y are unequal to zero, flip the turn
             if np.all(turn != 0):
                 aux_positions[idx] += turn
+            else:
+                # Perhaps do a "large scale" rotation
+                rr = npr.random()
+                if rr < 0.4:
+                    # Which of the two genome arms?
+                    iv = (0, idx) if rr < 0.2 else (idx+1, len(aux_positions))
+                    # Rotate left or right?
+                    lr = "left" if rr < 0.1 or 0.3 < rr < 0.4 else "right"
+                    # Do the rotation
+                    aux_positions = self.__pivot(aux_positions, idx, iv, lr)
+                else:
+                    # Do nothing if r > 0.4
+                    pass
 
         return aux_positions
 
@@ -247,6 +265,25 @@ class LatticeGenome(object):
         """Return one of four possible neighbours."""
         offset = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
         return xy + offset[npr.randint(len(offset))]
+
+    def __pivot(self, aux_positions, idx, interval, lr):
+        """Rotate part of the polymer 90 degrees left or right."""
+        pivot = aux_positions[idx]
+        lower, upper = interval
+        
+        # Translate, so pivot point is at (0, 0).
+        aux = np.array([p - pivot for p in aux_positions[lower:upper]])
+        # Rotate. Depending on the left/right rotation, the x or y coordinate 
+        # needs to be negated.
+        if lr == 'left':
+            aux[:, 0], aux[:, 1] = aux[:, 1], -aux[:, 0].copy()
+        else:
+            aux[:, 0], aux[:, 1] = -aux[:, 1], -aux[:, 0].copy()
+        # Translate back to original coordinates
+        aux += pivot
+        # Replace the old polymer segment with the rotated one
+        aux_positions[lower:upper] = aux
+        return aux_positions
 
     def element_type(self, idx):
         return type(self.polymer[idx]).__name__[:-7].lower()
@@ -393,6 +430,13 @@ class World(object):
                     np.array(iaction['distance_to_energy'])
         except KeyError:
             print("WW Interactions not defined properly.")
+
+        # Confine polymer to a radius around the transcription factory.
+        try:
+            self.confinement = conf['confinement']['radius']
+            self.penalty = conf['confinement']['penalty']
+        except KeyError:
+            print("WW confinement not defined properly.")
 
     def json_encode(self):
         """Write simulation parameters to dict."""
@@ -541,7 +585,11 @@ class World(object):
                     except KeyError:
                         energy += self.interactions[("neutral", "neutral")][
                             np.sum(np.abs(p - aux_positions[j]))]
-                        
+        
+        # A mild form of confinement to make our polymer not drift away
+        energy += self.penalty * np.count_nonzero(
+            [np.dot(p, p) > self.confinement**2 for p in aux_positions])
+
         # Done.
         return energy, kdtree
 
@@ -694,7 +742,7 @@ class Observers(object):
         self._axs[0, 0].add_collection(self._tfactory)
 
         # Make the plot pretty, no annoying tick or their labels
-        lim = (-15, 15)
+        lim = (-25, 25)
         self._axs[0, 0].set_xlim(*lim)
         self._axs[0, 0].set_ylim(*lim)
         self._axs[0, 0].set_xticks([])
