@@ -326,10 +326,50 @@ class LatticeGenome(object):
 
         return aux_positions
 
+
+    def has_transcription_loop_transcription(self, gpos, fpos):
+        """Check if genome has two regions transcribed with a loop between."""
+        # Factory positions as set for quick look-up
+        fpos = set((x,y) for x, y in fpos.tolist())
+
+        # Walk along polymer, find a t-l-t structure
+        last_t_found, last_l_found = -1, -1
+        for i, elm in enumerate(self.polymer):
+            # We're looking for transcribed regions on top of tfactory elements
+            flag_transcribed = (type(elm).__name__[:-7] == 'Transcribed' and 
+                tuple(gpos[i]) in fpos)
+            # and some non-transcribed elements that are not on the tfactory, 
+            # i.e. "loops"
+            flag_loop = (type(elm).__name__[:-7] != 'Transcribed' and 
+                tuple(gpos[i]) not in fpos)
+
+            if flag_transcribed and last_l_found == -1:
+                # We found a transcribed region overlapping with tfactory, but
+                # we have not yet found a "loop" part
+                # print("Found first transcribed overlapping with tfactory")
+                last_t_found = i
+
+            elif flag_transcribed and last_l_found != -1:
+                # Yay! We found another transcribed region on top of tfactory,
+                # and we already had a "loop" part
+                print("Found transcribed-loop-transcribed at", last_t_found,
+                    last_l_found, i)
+                return True
+
+            elif flag_loop and last_t_found != -1:
+                # We found a neutral (or other element) that is not overlapping
+                # with the tfactory
+                # print("Found neutral, not overlapping with tfactory")
+                last_l_found = i
+
+        return False
+
+
     def __neighbour(self, xy):
         """Return one of four possible neighbours."""
         offset = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
         return xy + offset[npr.randint(len(offset))]
+
 
     def __pivot(self, aux_positions, idx, interval, lr):
         """Rotate part of the polymer 90 degrees left or right."""
@@ -350,11 +390,14 @@ class LatticeGenome(object):
         aux_positions[lower:upper] = aux
         return aux_positions
 
+
     def element_type(self, idx):
         return type(self.polymer[idx]).__name__[:-7].lower()
 
+
     def __len__(self):
         return len(self.polymer)
+
 
     def __str__(self):
         return "-".join(self.get_polymer_types_abbreviated())
@@ -473,6 +516,9 @@ class World(object):
         self.positions_enhancer_a = []
         self.positions_enhancer_b = []
 
+        # Alternative stopping criterion
+        self.stop_if_loop_formed = False
+
         # Binary tree that keeps track of monomers and other elements in 
         # space. Used to quickly look up neighbours. About 4--5 times faster 
         # than naive all-against-all calculation.
@@ -538,6 +584,13 @@ class World(object):
         except KeyError:
             print('WW Missing shifting enhancers flag')
 
+        # Alternative stopping
+        try:
+            self.stop_if_loop_formed = bool(conf['stop_if_loop_formed'])
+            print('WW Simulation stops as first loop is formed')
+        except KeyError:
+            print('WW Simulation continues until end_time.')
+
 
     def json_encode(self):
         """Write simulation parameters to dict."""
@@ -602,10 +655,16 @@ class World(object):
                 observers.observe(time, self)
                 
             if not observers.pause:
-                # A single simulation step is defined as to attempt to "move" each
-                # element of the simulation. (At the moment only the genome.)
+                # A single simulation step is defined as to attempt to "move"
+                # each element of the simulation. (At the moment only the 
+                # genome.)
                 self.step(time)
                 time += 1
+
+            # Alternative stopping criterion
+            if self.stop_if_loop_formed:
+                if self.genome_has_loop():
+                    self.end_time = time
 
 
     def step(self, time_step):
@@ -641,6 +700,25 @@ class World(object):
                     # print(self.positions_enhancer_a, self.positions_enhancer_b)
 
             self.energy, self._kdtree = self.__calculate_energy(self.positions)
+
+
+    def genome_has_loop(self):
+        """Establish if the genome has formed a loop."""
+        if self.shifting_enhancers_flag:
+            if sorted(self.positions_enhancer_a) == sorted(self.positions_enhancer_b):
+                # Enhancers align
+                return True
+
+        elif self.loops_nbr > 0:
+            # If we have cohesin rings, we have loops
+            return True
+
+        else:
+            # If we have a transcription factory, two separate sites of the
+            # genome should attach to it to form a loop.
+            return self.genome.has_transcription_loop_transcription(
+                self.positions[0:self.weights[0]],
+                self.transcription_factory.initial_positions)
 
 
     def cohesin_ring_formation(self, idx):
@@ -1309,7 +1387,7 @@ def main():
     g.json_decode(conf)
     
     # Some output to see what is going on
-    out = "# Simulating a polymer genome of length {0}\n".format(len(g))
+    out = "# Simulating a polymer genome of length {0}".format(len(g))
     print(out)
 
     # Build a transcription factory
@@ -1332,7 +1410,7 @@ def main():
     # the two lines below.
     print("# Giving you some time to enjoy the plots...")
     # Wait for given number of seconds
-    time.sleep(5)
+    time.sleep(15)
 
     # Write out simulation results
     write_simulation_results(options, conf, w, o)

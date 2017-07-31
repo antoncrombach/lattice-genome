@@ -1,12 +1,13 @@
 {
-    "end_time": 100,
+    "end_time": 10000,
     "observe_time": 50,
     "random_seed": -1,
     "temperature": 6.5,
     "large_rotation_probability" : 0.4,
     "cohesin_ring_formation_probability": 0.0,
     "max_number_of_loops": 10,
-    "shifting_enhancers_flag": 1, 
+    "shifting_enhancers_flag": 0,
+    "stop_if_loop_formed": 1,
     
     "genome": [        
         {"type": "neutral"},
