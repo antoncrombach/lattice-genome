@@ -210,13 +210,19 @@ class LatticeGenome(object):
         # configuration, pq créer des collections.namedtuple si on l'utilise 
         # en tant que chaîne de caractères, et comment fonctionne la fonction 
         # type (renvoie type au lieu de TranscribedElement par ex).
-        result = {'genome': []}
+        result = {
+            'genome': [],
+            'large_rotation_probability': self.large_rotation_probability
+            }
+
+        # Fill the genome
         for e, xy in zip(self.polymer, positions):
             try:
                 result['genome'].append({'type': e.name.lower(), 
                     'x': xy[0], 'y': xy[1]}) 
             except AttributeError :
-                result['genome'].append({'type': type(e).__name__[0:-7].lower(), 
+                result['genome'].append(
+                    {'type': type(e).__name__[0:-7].lower(), 
                     'x': xy[0], 'y': xy[1]})
         return result
 
@@ -463,7 +469,7 @@ class World(object):
         self.loops_nbr = 0
         self.max_number_of_loops = 50
         # Storing informations about dynamic enhancers
-        self.shifting_enh_probability = 0
+        self.shifting_enhancers_flag = 0
         self.positions_enhancer_a = []
         self.positions_enhancer_b = []
 
@@ -539,7 +545,6 @@ class World(object):
             'end_time': self.end_time,
             'observe_time': self.stats_time,
             'temperature': self.temp,
-            'large_rotation_probability': self.large_rotation_probability,
             'cohesin_ring_formation_probability':
                 self.cohesin_ring_formation_probability,
             'shifting_enhancers_flag': self.shifting_enhancers_flag,
@@ -1293,7 +1298,10 @@ def main():
     # Read in simulation parameters
     conf = read_json_configuration(options.config)
 
-    # Set up simulation
+    # If random seed == -1, then use current time multiplied by the process 
+    # number as a starting point.
+    if conf['random_seed'] == -1:
+        conf['random_seed'] = int(time.time() * os.getpid()) % 2**32
     npr.seed(conf['random_seed'])
 
     # Build a genome

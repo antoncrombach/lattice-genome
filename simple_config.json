@@ -1,7 +1,7 @@
 {
-    "end_time": 100000,
+    "end_time": 100,
     "observe_time": 50,
-    "random_seed": 18,
+    "random_seed": -1,
     "temperature": 6.5,
     "large_rotation_probability" : 0.4,
     "cohesin_ring_formation_probability": 0.0,
