@@ -2,7 +2,7 @@
 # coding: utf-8
 """
     Copyright (C) 2017  Anton Crombach (anton.crombach@college-de-france.fr)
-                        Alice D'Huillier (lhuillie@magbio.ens.fr)
+                        Alice L'Huillier (lhuillie@magbio.ens.fr)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -68,7 +68,9 @@ TFACTORY_BLACK = (0.100, 0.050, 0.050, 0.700)
 MONOMER_COLOUR_MAP = {
     'n': (0.125, 0.469, 0.707, 0.700),
     't': (1.000, 0.498, 0.055, 0.700),
-    'e': (0.593, 0.305, 0.637, 0.900)
+    'e': (0.593, 0.305, 0.637, 0.900),
+    'r': (1.000, 0.000, 1.000, 0.900),
+    'c': (0.750, 0.498, 0.055, 0.700)
     }
 
 
@@ -78,6 +80,10 @@ MONOMER_COLOUR_MAP = {
 NeutralElement = collections.namedtuple('NeutralElement', [])
 TranscribedElement = collections.namedtuple('TranscribedElement', [])
 EnhancerElement = collections.namedtuple('EnhancerElement', [])
+CTCFElement = collections.namedtuple('CTCFElement', ['name'])
+
+# Transitory ring elements
+RingElement = collections.namedtuple('RingElement', ['name'])
 
 # Additional enhancer elements
 Enhancer_AElement = collections.namedtuple('Enhancer_AElement', [])
@@ -94,6 +100,14 @@ class LatticeGenome(object):
         self.initial_positions = []
         self._positions_from_file = False
 
+        self.idx_turn = 0
+        self.large_rotation_probability = 0.0
+
+        # Storing informations about dynamic enhancers
+        self.idx_enhancer_a = []
+        self.idx_enhancer_b = []
+
+
     def json_decode(self, conf):
         """Build genome from json dict."""
         # Reset polymer and positions to be empty
@@ -107,7 +121,7 @@ class LatticeGenome(object):
         if options.verbose:
             print("# Reading genome...")
         try:
-            for elm in conf['genome']:
+            for i, elm in enumerate(conf['genome']):
                 # Each element has a type, and may have a two-dimensional (xy) 
                 # position.
                 if elm['type'] == 'neutral':
@@ -142,16 +156,29 @@ class LatticeGenome(object):
                     try:
                         self.initial_positions.append(
                             [int(elm['x']), int(elm['y'])])
+                        self.idx_enhancer_a.append(i)
                     except KeyError:
                         pass
                     
                 elif elm['type'] == 'enhancer_b':
                     self.polymer.append(Enhancer_BElement())
+                    self.idx_enhancer_b.append(i)
                     try:
                         self.initial_positions.append(
                             [int(elm['x']), int(elm['y'])])
                     except KeyError:
                         pass
+
+                elif elm['type'] == 'ctcf':
+                    self.polymer.append(CTCFElement(name='ctcf'))
+                    try:
+                        self.initial_positions.append(
+                            [int(elm['x']), int(elm['y'])])
+                    except KeyError:
+                        pass
+
+                else:
+                    print('Monomer {0} is missing, as its type is unknown.'.format(i))
 
         except KeyError:
             print('EE Incorrect genome, perhaps unknown element')
@@ -162,15 +189,37 @@ class LatticeGenome(object):
             self.initial_positions = np.array(self.initial_positions)
             self._positions_from_file = True
 
+        # Check if a and b enhancers occur equally often.
+        if len(self.idx_enhancer_a) != len(self.idx_enhancer_b) :
+            print('WW Enhancers with different length can not be dynamic')
+                
+        try :
+            self.large_rotation_probability = \
+                conf['large_rotation_probability']
+            if not (0.0 < self.large_rotation_probability < 1.0):
+                raise ValueError(
+                    'EE large scale rotation probability out of range')
+        except KeyError:
+            print("WW Missing large scale rotations")
+            self.large_rotation_probability = 0.0
+
+
     def json_encode(self, positions):
         """Write genome to json dict."""
         # Ecrire les fichier de sortie dans le même format que les fichiers de
         # configuration, pq créer des collections.namedtuple si on l'utilise 
         # en tant que chaîne de caractères, et comment fonctionne la fonction 
         # type (renvoie type au lieu de TranscribedElement par ex).
-        return {'genome': [{
-            'type': type(e).__name__[0:-7].lower(), 'x': xy[0], 'y': xy[1]} 
-                for e, xy in zip(self.polymer, positions)]}
+        result = {'genome': []}
+        for e, xy in zip(self.polymer, positions):
+            try:
+                result['genome'].append({'type': e.name.lower(), 
+                    'x': xy[0], 'y': xy[1]}) 
+            except AttributeError :
+                result['genome'].append({'type': type(e).__name__[0:-7].lower(), 
+                    'x': xy[0], 'y': xy[1]})
+        return result
+
 
     def get_polymer_types_abbreviated(self):
         """
@@ -179,8 +228,10 @@ class LatticeGenome(object):
         """
         return [type(e).__name__[0].lower() for e in self.polymer]
 
+
     def has_positions_from_file(self):
         return self._positions_from_file
+
 
     def random_initial_positions(self):
         """
@@ -210,12 +261,15 @@ class LatticeGenome(object):
         # Input to cumsum is a list, returns a numpy array
         self.initial_positions = np.cumsum(directions, axis=0)
 
+
     def long_range_interactions(self):
         """
-        Return for each monomer, all monomers that it forms a long range interaction with.
+        Return for each monomer, all monomers that it forms a long range 
+        interaction with.
         """
         # return self._kdtree.query_ball_point(self.positions, 3, p=1.0)
         pass
+
 
     def attempt(self, positions):
         """
@@ -228,6 +282,7 @@ class LatticeGenome(object):
         1993, 1994. The "large" rotation is part of Mover set 2 (MS2).
         """
         aux_positions = np.copy(positions)
+        self.idx_turn = -1
         # Pick a monomer
         idx = npr.randint(len(aux_positions))
 
@@ -245,18 +300,22 @@ class LatticeGenome(object):
             # If x and y are unequal to zero, flip the turn
             if np.all(turn != 0):
                 aux_positions[idx] += turn
+                self.idx_turn = idx
             else:
                 # Perhaps do a "large scale" rotation
                 rr = npr.random()
-                if rr < 0.4:
+                if rr < self.large_rotation_probability:
                     # Which of the two genome arms?
-                    iv = (0, idx) if rr < 0.2 else (idx+1, len(aux_positions))
+                    half = self.large_rotation_probability / 2.0
+                    iv = (0, idx) if rr < half else (idx+1, len(aux_positions))
                     # Rotate left or right?
-                    lr = "left" if rr < 0.1 or 0.3 < rr < 0.4 else "right"
+                    quarter = half / 2.0
+                    lr = "left" if rr < quarter or \
+                        half+quarter <= rr < self.large_rotation_probability else "right"
                     # Do the rotation
                     aux_positions = self.__pivot(aux_positions, idx, iv, lr)
                 else:
-                    # Do nothing if r > 0.4
+                    # Do nothing if r > self.large_rotation_probability
                     pass
 
         return aux_positions
@@ -307,7 +366,7 @@ class TranscriptionFactory(object):
     def __init__(self):
         # Positions of monomers on the lattice.
         self.center = (0, 0)
-        self.radius = 3
+        self.radius = 0
         self.initial_positions = []
         self._positions_from_file = False
 
@@ -398,6 +457,15 @@ class World(object):
         self.temp = 0.0
         # Mapping interactions between particles to energy
         self.interactions = {}
+        # Storing informations about cohesin ring
+        self.cohesin_ring_formation_probability = 0
+        self.ring_element_idx = []
+        self.loops_nbr = 0
+        self.max_number_of_loops = 50
+        # Storing informations about dynamic enhancers
+        self.shifting_enh_probability = 0
+        self.positions_enhancer_a = []
+        self.positions_enhancer_b = []
 
         # Binary tree that keeps track of monomers and other elements in 
         # space. Used to quickly look up neighbours. About 4--5 times faster 
@@ -438,19 +506,56 @@ class World(object):
         except KeyError:
             print("WW confinement not defined properly.")
 
+        # Cohesin rings may be used -- and thus should be read
+        try:
+            self.cohesin_ring_formation_probability = \
+                conf['cohesin_ring_formation_probability']
+            if not(0.0 <= conf['cohesin_ring_formation_probability'] <= 1.0):
+                raise ValueError('Probability of cohesin ring formation is out of range') 
+
+        except KeyError :
+            print("WW Missing ring complexes")
+
+        # AC: I've removed the code for implicit changes of the probability. I
+        # prefer that the program stops and the user fixes the config file.
+        
+        try:
+            self.max_number_of_loops = conf['max_number_of_loops']
+        except KeyError:
+            print("WW number of loops is limited to 50")
+            
+        # AC: If we only allow for 0 or 1, we better call it a "flag" that 
+        # toggles on/off.
+        try:
+            self.shifting_enhancers_flag = bool(
+                conf['shifting_enhancers_flag'])
+        except KeyError:
+            print('WW Missing shifting enhancers flag')
+
+
     def json_encode(self):
         """Write simulation parameters to dict."""
         return {
             'end_time': self.end_time,
             'observe_time': self.stats_time,
-            'genome': self.genome.json_encode(self.genome_positions()),
+            'temperature': self.temp,
+            'large_rotation_probability': self.large_rotation_probability,
+            'cohesin_ring_formation_probability':
+                self.cohesin_ring_formation_probability,
+            'shifting_enhancers_flag': self.shifting_enhancers_flag,
+            'genome': 
+                self.genome.json_encode(self.genome_positions())['genome'],
             'transcription_factory': self.transcription_factory.json_encode(),
             'interactions': [{
                 "first": k[0], 
                 "second": k[1], 
                 "distance_to_energy": v.tolist()}
-                    for k, v in self.interactions.iteritems()]
+                    for k, v in self.interactions.iteritems()],
+            'confinement': {
+                'radius': self.confinement,
+                'penalty': self.penalty}
             }
+
 
     def add_genome(self, genome):
         """Add genome particle, a polymer."""
@@ -459,12 +564,14 @@ class World(object):
         if not self.genome.has_positions_from_file():
             self.genome.random_initial_positions()
 
+
     def add_transcription_factory(self, factory):
         """Add transcription factory particle, a big circle."""
         self.transcription_factory = factory
         # Factory by definition does not have an initial position yet.
         # Let's generate one
         self.transcription_factory.random_initial_positions()
+
 
     def prepare(self):
         """Prepare simulation."""
@@ -474,6 +581,9 @@ class World(object):
             self.transcription_factory.initial_positions))
         self.energy, self._kdtree = self.__calculate_energy(
             self.positions)
+        self.positions_enhancer_a, self.positions_enhancer_b = \
+            self.new_positions_enhancers()        
+
 
     def simulate(self, observers):
         """Monte Carlo simulation algorithm."""
@@ -492,6 +602,7 @@ class World(object):
                 self.step(time)
                 time += 1
 
+
     def step(self, time_step):
         """
         Accept attempt if it lowers the energy or simply by chance using 
@@ -504,6 +615,239 @@ class World(object):
             self.positions = new_positions
             self.energy = new_energy
             self._kdtree = new_tree
+
+            # If we accept, we always try cohesin ring formation.
+            if self.cohesin_ring_formation_probability > 0.0:
+                self.cohesin_ring_sliding()
+                # If we just had a turn...
+                if self.genome.idx_turn != -1:
+                    self.cohesin_ring_formation(self.genome.idx_turn)
+
+            # And we always try to shift enhancers
+            if self.shifting_enhancers_flag:
+                # Update positions ..
+                self.positions_enhancer_a, self.positions_enhancer_b = \
+                    self.new_positions_enhancers()
+                # .. and shift the enhancers
+                if sorted(self.positions_enhancer_a) == sorted(self.positions_enhancer_b):
+                    # print(self.positions_enhancer_a, self.positions_enhancer_b)
+                    # print(self.genome.idx_enhancer_a, self.genome.idx_enhancer_b)
+                    self.new_profile_enhancers()
+                    # print(self.positions_enhancer_a, self.positions_enhancer_b)
+
+            self.energy, self._kdtree = self.__calculate_energy(self.positions)
+
+
+    def cohesin_ring_formation(self, idx):
+        """Attempt to form a cohesin ring at position idx."""
+        if self.loops_nbr < self.max_number_of_loops:
+            rr = npr.random()
+            if rr < self.cohesin_ring_formation_probability:
+                try:
+                    # If we have a "hairpin", we can form a loop
+                    if list(self.positions[idx]) == list(self.positions[idx-2]):
+
+                        # Update loop number and make a name out of it
+                        self.loops_nbr += 1
+                        loopie = 'ring{0}'.format(self.loop_nbr)
+
+                        self.genome.polymer[idx] = RingElement(name=loopie)
+                        self.genome.polymer[idx+1] = RingElement(name=loopie)
+                        self.genome.polymer[idx-2] = RingElement(name=loopie)
+                        self.genome.polymer[idx-3] = RingElement(name=loopie)
+                        self.ring_element_idx.append([idx-3, idx-2, idx, idx+1])
+
+                        self.interactions[(loopie, loopie)] = \
+                            self.interactions[('ring','ring')]
+
+                        # print(self.ring_element_idx)
+                        # print(self.interactions)
+                        # print(self.loops_nbr)
+
+                    elif list(self.positions[idx]) == list(self.positions[idx+2]):
+
+                        # Update loop number and make a name out of it
+                        self.loops_nbr += 1
+                        loopie = 'ring{0}'.format(self.loop_nbr)
+
+                        self.genome.polymer[idx-1] = RingElement(name=loopie)
+                        self.genome.polymer[idx] = RingElement(name=loopie)
+                        self.genome.polymer[idx+2] = RingElement(name=loopie)
+                        self.genome.polymer[idx+3] = RingElement(name=loopie)                       
+                        self.ring_element_idx.append([idx-1, idx, idx+2, idx+3])
+                        
+                        self.interactions[(loopie, loopie)] = \
+                            self.interactions[('ring','ring')]
+
+                        # print(self.ring_element_idx)
+                        # print(self.interactions)
+                        # print(self.loops_nbr)
+
+                except IndexError:
+                    pass
+
+    
+    def cohesin_ring_sliding(self) :
+        """Advance any of the cohesin rings, until they bump into CTCF."""
+        # Little helper functions to make the code more elegant
+        def is_ctcf(x):
+            return type(self.genome.polymer[x]).__name__ == 'CTCFElement'
+
+        def is_ring(x):
+            return type(self.genome.polymer[x]).__name__ == 'RingElement'
+
+        # And now the real code of this function...
+        for i, relm in enumerate(self.ring_element_idx):
+            try:
+                a, b, c, d = relm
+                if ([list(self.positions[a]), list(self.positions[b])] == 
+                    [list(self.positions[d]), list(self.positions[c])]):
+
+                    # print([list(self.positions[a]), list(self.positions[b])],
+                    #     [list(self.positions[c]), list(self.positions[d])])
+                    if is_ctcf(a):
+                        if is_ctcf(d):
+                            self.genome.polymer[b] = NeutralElement()
+                            self.genome.polymer[c] = NeutralElement()
+                            # del relm[1], relm[2]
+
+                    elif is_ring(a):
+                        try:
+                            if a-1 < 0:
+                                raise IndexError('Cohesin ring can not slide from one DNA end to the other')
+
+                            if is_ctcf(a-1):
+                                self.genome.polymer[b] = NeutralElement()
+                                self.genome.polymer[a-1] = \
+                                    CTCFElement(name='ctcf_ring')
+                                # relm[0], relm[1] = a-1, a
+
+                            else:
+                                self.genome.polymer[a-1] = \
+                                    RingElement(name='ring' + str(i+1))
+                                self.genome.polymer[b] = NeutralElement()
+                                # relm[0], relm[1] = a-1, a
+
+                        except IndexError:
+                            pass
+                    
+                    if is_ctcf(d):
+                        # We don't care if d is a CTCF element.
+                        pass
+
+                    elif is_ring(d):
+                        try:
+                            if d + 1 > len(self.genome) - 1:
+                                raise IndexError('Cohesin ring can not slide from one DNA end to the other')
+
+                            if is_ctcf(d+1):
+                                self.genome.polymer[c] = NeutralElement()
+                                self.genome.polymer[d+1] = \
+                                    CTCFElement(name='ctcf_ring')
+                                # relm[2], relm[3] = d, d+1
+
+                            else:
+                                self.genome.polymer[d+1] = \
+                                    RingElement(name='ring' + str(i+1)) 
+                                self.genome.polymer[c] = NeutralElement()
+                                # relm[2], relm[3] = d, d+1
+
+                        except IndexError:
+                            pass
+
+                    # print(self.ring_element_idx)
+
+            except ValueError:
+                pass
+  
+
+    def new_profile_enhancers(self):
+        """
+        We know that the two enhancers (a and b) overlap. Such a configuration 
+        can refer to 2 types of loops. Here we are only interested in loops in 
+        which the last residu of an enhancer interacts with the first of the 
+        other.
+
+        If enhancers are not located at the end of the DNA strand, enhancers 
+        are shifted in this direction.
+        """
+        try:
+            # No matter the relative position of enhancers, we can check if 
+            # the loop type is the interesting one.
+            if (list(self.positions[max(self.genome.idx_enhancer_a)]) == 
+                list(self.positions[min(self.genome.idx_enhancer_b)])):
+                
+                try:
+                    # Take the furthest monomer, starting from index 0
+                    #
+                    # AC: I think there is a bug here, since we always subtract
+                    # the length of idx_enhancer_a (also if we took the index 
+                    # from the b list).
+                    furthest = max(
+                        self.genome.idx_enhancer_a + self.genome.idx_enhancer_b)
+                    ii = furthest + 1
+                    jj = furthest - len(self.genome.idx_enhancer_a) + 1
+
+                    # Swap monomers (i.e. only types are swapped)
+                    self.genome.polymer[ii], self.genome.polymer[jj] = \
+                        self.genome.polymer[jj], self.genome.polymer[ii]
+                
+                    # Take the closest monomer, starting from index 0
+                    #
+                    # AC: Same bug...
+                    closest = min(
+                        self.genome.idx_enhancer_a + self.genome.idx_enhancer_b)
+                    pp = closest - 1
+                    qq = closest + len(self.genome.idx_enhancer_a) - 1
+
+                    # Swap other side of the loop as well
+                    self.genome.polymer[pp], self.genome.polymer[qq] = \
+                        self.genome.polymer[qq], self.genome.polymer[pp]                        
+                    
+                    # Update the cache of indices
+                    if (max(self.genome.idx_enhancer_a, 
+                        self.genome.idx_enhancer_b) == 
+                            self.genome.idx_enhancer_a):
+
+                        for i in range(len(self.genome.idx_enhancer_a)):
+                            self.genome.idx_enhancer_a[i] += 1
+                        for j in range(len(self.genome.idx_enhancer_b)):
+                            self.genome.idx_enhancer_b[j] -= 1
+
+                    else:
+
+                        for i in range(len(self.genome.idx_enhancer_a)):
+                            self.genome.idx_enhancer_a[i] -= 1
+                        for j in range(len(self.genome.idx_enhancer_b)):
+                            self.genome.idx_enhancer_b[j] += 1
+
+                    # For debugging
+                    # print(self.genome.idx_enhancer_a, self.genome.idx_enhancer_b)
+                except IndexError:
+                    pass
+                
+        except ValueError:
+            pass
+
+
+    def new_positions_enhancers(self):
+        """Update the positions of a and b enhancers."""
+        new_positions_enhancer_a = []
+        new_positions_enhancer_b = []
+        try :
+            # Use the genome's indices of enhancers to update their positions.
+            for i in self.genome.idx_enhancer_a :
+                new_positions_enhancer_a.append(list(self.positions[i]))
+
+            for j in self.genome.idx_enhancer_b :
+                new_positions_enhancer_b.append(list(self.positions[j]))
+
+        except IndexError:
+            # AC: Not sure when this tends to fail...
+            pass
+
+        return new_positions_enhancer_a, new_positions_enhancer_b
+
 
     def attempt(self):
         """
@@ -520,13 +864,16 @@ class World(object):
         energy, tree = self.__calculate_energy(aux_positions)
         return aux_positions, energy, tree
 
+
     def genome_positions(self):
         """Return only positions of the polymer genome."""
         return self.positions[0:self.weights[0]]
 
+
     def transcription_factory_positions(self):
         """Return positions of the tfactory."""
         return self.positions[self.weights[0]:]
+
 
     def __calculate_energy(self, aux_positions):
         """
@@ -571,8 +918,15 @@ class World(object):
                     # Which element (type of monomer) do the indices refer to?
                     offset_i = self.weights[pi-1] if pi > 0 else 0
                     offset_j = self.weights[pj-1] if pj > 0 else 0
-                    first = self.particles[pi].element_type(i - offset_i)
-                    second = self.particles[pj].element_type(j - offset_j)
+                    try:
+                        # CTCF and Ring elements have a name
+                        first = self.particles[pi].polymer[i-offset_i].name
+                        second = self.particles[pj].polymer[j-offset_j].name
+
+                    except AttributeError:
+                        # Default behaviour
+                        first = self.particles[pi].element_type(i - offset_i)
+                        second = self.particles[pj].element_type(j - offset_j)
 
                     # Maintain alphabetical ordering of interaction tuple
                     if first > second:
@@ -618,6 +972,7 @@ class Observers(object):
         self.polymer_positions = {}
         self.polymer_positions_fname = ''
 
+
     def json_decode(self, conf):
         """Reading in which data to collect and save to file."""
         # At the moment we only track polymer positions
@@ -629,10 +984,12 @@ class Observers(object):
             # positions.
             pass
 
+
     def json_encode(self):
         """Write out polymer positions per time step."""
         return [{'time': t, 'positions': p.tolist()} 
             for t,p in sorted(self.polymer_positions.iteritems())]
+
 
     def observe(self, time_step, world):
         """
@@ -684,7 +1041,7 @@ class Observers(object):
 
         else:
             # Update time and polymer positions
-            self.__observe_polymer(time_step, xy, segments)
+            self.__observe_polymer(time_step, world, xy, segments)
             # Update time vs energy graph
             self.__observe_energy(time_step, en)
             # Update distance matrix
@@ -696,9 +1053,11 @@ class Observers(object):
             self._fig.canvas.draw()
             self._fig.canvas.flush_events()
 
+
     def have_results_to_save(self):
         """Quick check if we have anything to write to disk."""
         return self.polymer_positions_fname
+
 
     def __pause_simulation(self, event):
         """
@@ -710,6 +1069,7 @@ class Observers(object):
             print("# Paused...")
         else:
             print("# Running...")
+
 
     def __prepare_polymer_plot(self, time_step, world, xy, segments, tf):
         """Prepare polymer line and monomers."""
@@ -752,11 +1112,20 @@ class Observers(object):
         # Make sure the plot is square
         self._axs[0, 0].set_aspect(1.0)
 
-    def __observe_polymer(self, time_step, xy, segments):
+
+    def __observe_polymer(self, time_step, world, xy, segments):
         """Update time and polymer positions."""
         self._axs[0, 0].set_title('Time = {0}'.format(time_step))
         self._polymer_line.set_paths(segments)
+
+        # Different monomers have different colours
+        pt = world.genome.get_polymer_types_abbreviated()
+        pc = [MONOMER_COLOUR_MAP[m] for m in pt]
+        self._monomers.set_facecolor(pc)
+        self._monomers.set_edgecolor(pc)
+        # And update positions
         self._monomers.set_offsets(xy)        
+
 
     def __prepare_energy_plot(self, time_step, energy):
         """Prepare to plot energy over time."""
@@ -775,6 +1144,7 @@ class Observers(object):
         self._energy_label = self._axs[1, 0].text(.9, .9, 
             'E = {0}'.format(energy), transform=self._axs[1, 0].transAxes)
 
+
     def __observe_energy(self, time_step, energy):
         """Update time vs energy graph."""
         # Label to keep track of the exact value
@@ -787,6 +1157,7 @@ class Observers(object):
         # Rescale etc. needed!
         self._axs[1, 0].relim()
         self._axs[1, 0].autoscale_view()
+
 
     def __prepare_pairwise_distance_plot(self, time_step, positions):
         """Prepare to plot distance matrices."""
@@ -803,12 +1174,14 @@ class Observers(object):
         self._fig.colorbar(self._dist_img, ticks=[0, 5, 10, 15], 
             ax=self._axs[0, 1])
 
+
     def __observe_pairwise_distances(self, time_step, positions):
         """Update matrix of pairwise distances."""
         # Calculating distances, unfortunately computationally costly.
         d = spsp.distance.squareform(
                 spsp.distance.pdist(positions, 'cityblock'))
         self._dist_img.set_data(d)
+
 
     def __prepare_long_range_iaction_plot(self, time_step, world, neighbours):
         """Prepare to plot many lines."""
@@ -832,6 +1205,7 @@ class Observers(object):
         self._axs[1, 1].set_title('Long-range interactions')
         self._axs[1, 1].set_xlabel('Time (au)')
         self._axs[1, 1].set_ylabel('Sum of linear distances')
+
 
     def __observe_long_range_interactions(self, time_step, neighbours):
         """Calculate long range interactions and plot them per monomer."""
@@ -950,7 +1324,7 @@ def main():
     # the two lines below.
     print("# Giving you some time to enjoy the plots...")
     # Wait for given number of seconds
-    time.sleep(60)
+    time.sleep(5)
 
     # Write out simulation results
     write_simulation_results(options, conf, w, o)

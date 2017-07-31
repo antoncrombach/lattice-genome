@@ -3,6 +3,11 @@
     "observe_time": 50,
     "random_seed": 18,
     "temperature": 6.5,
+    "large_rotation_probability" : 0.4,
+    "cohesin_ring_formation_probability": 0.0,
+    "max_number_of_loops": 10,
+    "shifting_enhancers_flag": 1, 
+    
     "genome": [        
         {"type": "neutral"},
         {"type": "neutral"},
