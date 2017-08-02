@@ -56,6 +56,7 @@ import scipy.spatial as spsp
 # Matplotlib visualizes the polymer on the lattice and its statistics
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 
 # Constants
@@ -666,6 +667,9 @@ class World(object):
                 if self.genome_has_loop():
                     self.end_time = time
 
+        # Final observation
+        observers.observe(time, self)
+
 
     def step(self, time_step):
         """
@@ -1039,6 +1043,7 @@ class Observers(object):
         # Graphics
         self._first = True
         self._fig = None
+        self._axs = None
         
         # Polymer line segments and monomer positions
         self._polymer_line = None
@@ -1055,6 +1060,9 @@ class Observers(object):
         self.polymer_positions = {}
         self.polymer_positions_fname = ''
 
+        # Take a screenshot
+        self.screenshot_fname = ''
+
 
     def json_decode(self, conf):
         """Reading in which data to collect and save to file."""
@@ -1062,6 +1070,7 @@ class Observers(object):
         try:
             self.polymer_positions_fname = \
                 conf['observers']['polymer_positions']
+            self.screenshot_fname = conf['observers']['screenshot']
         except KeyError:
             # Fail silently, because we do not *have* to track polymer 
             # positions.
@@ -1098,21 +1107,26 @@ class Observers(object):
         if self._first:
             # Set up visualization only once
             self._first = False
-            self._fig, self._axs = plt.subplots(nrows=2, ncols=2)
+
+            # Create grid of 2 rows, 3 columns
+            self._fig = plt.figure(figsize=(9,6))
+            gs = gridspec.GridSpec(2, 3)
+            gs.update(left=0.02, right=0.98, wspace=0.15, hspace=0.15)
+            self._axs = [
+                self._fig.add_subplot(gs[:, :2]),
+                self._fig.add_subplot(gs[0, 2]),
+                self._fig.add_subplot(gs[1, 2])]
 
             # Axis 0: 2D polymer conformation
             self.__prepare_polymer_plot(time_step, world, xy, segments, tf)
 
-            # Axis 1, 0: energy of the polymer over time
+            # Axis 1: energy of the polymer over time
             self.__prepare_energy_plot(time_step, en)
 
-            # Axis 0, 1: distance matrix
+            # Axis 2: distance matrix
             self.__prepare_pairwise_distance_plot(time_step, 
                 world.genome_positions())
             
-            # Axis 1, 1:
-            # self.__prepare_long_range_iaction_plot(time_step, world, nbs)
-
             # Connect key press and mouse button events to pause simulation.
             self._fig.canvas.mpl_connect("key_press_event", 
                 self.__pause_simulation)
@@ -1135,6 +1149,11 @@ class Observers(object):
 
             self._fig.canvas.draw()
             self._fig.canvas.flush_events()
+
+
+    def take_screenshot(self):
+        """Save a high-res PNG of the final figure displayed on the screen."""
+        self._fig.savefig(self.screenshot_fname, dpi=300)
 
 
     def have_results_to_save(self):
@@ -1162,13 +1181,13 @@ class Observers(object):
 
         self._monomers = mpl.collections.RegularPolyCollection(8, 
             sizes=[8.0 for _ in xy], offsets=xy, 
-            transOffset=self._axs[0, 0].transData)
+            transOffset=self._axs[0].transData)
         trans = mpl.transforms.Affine2D().scale(self._fig.dpi/72.0)
         self._monomers.set_transform(trans)
 
         self._tfactory = mpl.collections.RegularPolyCollection(5, 
             sizes=[10.0 for _ in tf], offsets=tf,
-            transOffset=self._axs[0, 0].transData)
+            transOffset=self._axs[0].transData)
 
         # Different monomers have different colours
         pt = world.genome.get_polymer_types_abbreviated()
@@ -1180,25 +1199,25 @@ class Observers(object):
         self._tfactory.set_facecolor(TFACTORY_BLACK)
         self._tfactory.set_edgecolor(TFACTORY_BLACK)
 
-        self._axs[0, 0].add_collection(self._polymer_line)
-        self._axs[0, 0].add_collection(self._monomers)
-        self._axs[0, 0].add_collection(self._tfactory)
+        self._axs[0].add_collection(self._polymer_line)
+        self._axs[0].add_collection(self._monomers)
+        self._axs[0].add_collection(self._tfactory)
 
         # Make the plot pretty, no annoying tick or their labels
         lim = (-25, 25)
-        self._axs[0, 0].set_xlim(*lim)
-        self._axs[0, 0].set_ylim(*lim)
-        self._axs[0, 0].set_xticks([])
-        self._axs[0, 0].set_xticklabels([])
-        self._axs[0, 0].set_yticks([])
-        self._axs[0, 0].set_yticklabels([])
+        self._axs[0].set_xlim(*lim)
+        self._axs[0].set_ylim(*lim)
+        self._axs[0].set_xticks([])
+        self._axs[0].set_xticklabels([])
+        self._axs[0].set_yticks([])
+        self._axs[0].set_yticklabels([])
         # Make sure the plot is square
-        self._axs[0, 0].set_aspect(1.0)
+        self._axs[0].set_aspect(1.0)
 
 
     def __observe_polymer(self, time_step, world, xy, segments):
         """Update time and polymer positions."""
-        self._axs[0, 0].set_title('Time = {0}'.format(time_step))
+        self._axs[0].set_title('Time = {0}'.format(time_step))
         self._polymer_line.set_paths(segments)
 
         # Different monomers have different colours
@@ -1213,19 +1232,20 @@ class Observers(object):
     def __prepare_energy_plot(self, time_step, energy):
         """Prepare to plot energy over time."""
         # Create plotting area with 1 data point (at the moment)
-        self._energy_line, = self._axs[1, 0].plot([time_step], [energy])
+        self._energy_line, = self._axs[2].plot([time_step], [energy])
 
         # No extra spines
-        self._axs[1, 0].spines['top'].set_visible(False)
-        self._axs[1, 0].spines['right'].set_visible(False)
+        self._axs[2].spines['top'].set_visible(False)
+        self._axs[2].spines['right'].set_visible(False)
 
         # Add labels for clarity
-        self._axs[1, 0].set_xlabel('Time (au)')
-        self._axs[1, 0].set_ylabel('Energy (au)')
+        self._axs[2].set_xlabel('Time (au)')
+        self._axs[2].set_ylabel('Energy (au)')
 
         # Keep track of current energy of the polymer
-        self._energy_label = self._axs[1, 0].text(.9, .9, 
-            'E = {0}'.format(energy), transform=self._axs[1, 0].transAxes)
+        self._energy_label = self._axs[2].text(.98, .98, 
+            'E = {0}'.format(energy), horizontalalignment='right', 
+            verticalalignment='top', transform=self._axs[2].transAxes)
 
 
     def __observe_energy(self, time_step, energy):
@@ -1238,8 +1258,8 @@ class Observers(object):
         self._energy_line.set_data(
             (np.append(aux_t, time_step), np.append(aux_e, energy)))
         # Rescale etc. needed!
-        self._axs[1, 0].relim()
-        self._axs[1, 0].autoscale_view()
+        self._axs[2].relim()
+        self._axs[2].autoscale_view()
 
 
     def __prepare_pairwise_distance_plot(self, time_step, positions):
@@ -1247,15 +1267,15 @@ class Observers(object):
         # Calculating distances, unfortunately computationally costly.
         d = spsp.distance.squareform(
                 spsp.distance.pdist(positions, 'cityblock'))
-        self._dist_img = self._axs[0, 1].imshow(d, interpolation='nearest')
+        self._dist_img = self._axs[1].imshow(d, interpolation='nearest')
 
         # Add labels for clarity
-        self._axs[0, 1].set_title('Pairwise distance')
-        self._axs[0, 1].set_ylabel('Monomer index')
+        self._axs[1].set_title('Pairwise distance')
+        self._axs[1].set_ylabel('Monomer index')
 
         # Add colorbar, make sure to specify tick locations
         self._fig.colorbar(self._dist_img, ticks=[0, 5, 10, 15], 
-            ax=self._axs[0, 1])
+            ax=self._axs[1])
 
 
     def __observe_pairwise_distances(self, time_step, positions):
@@ -1264,43 +1284,6 @@ class Observers(object):
         d = spsp.distance.squareform(
                 spsp.distance.pdist(positions, 'cityblock'))
         self._dist_img.set_data(d)
-
-
-    def __prepare_long_range_iaction_plot(self, time_step, world, neighbours):
-        """Prepare to plot many lines."""
-        # How do I define a long range interaction? Any interaction with not-
-        # immediate neighbours is of long(er) range. A first attempt is to 
-        # sum the linear distances between monomers that engage in a long range
-        # interaction.
-
-        pt = world.genome.get_polymer_types_abbreviated()
-        pc = [MONOMER_COLOUR_MAP[m] for m in pt]
-        
-        # i is the index to the current monomer, nbs is a list of 
-        # neighbours (indices to monomers)
-        self._lr_iaction_lines = []
-        for i, nbs in enumerate(neighbours):
-            line, = self._axs[1, 1].plot([time_step], 
-                np.sum([np.abs(i - j) for j in nbs]), color=pc[i])
-            self._lr_iaction_lines.append(line)
-        
-        # Add labels for clarity
-        self._axs[1, 1].set_title('Long-range interactions')
-        self._axs[1, 1].set_xlabel('Time (au)')
-        self._axs[1, 1].set_ylabel('Sum of linear distances')
-
-
-    def __observe_long_range_interactions(self, time_step, neighbours):
-        """Calculate long range interactions and plot them per monomer."""
-        for i, nbs in enumerate(neighbours):
-            aux_t, aux_lria = self._lr_iaction_lines[i].get_data()
-            self._lr_iaction_lines[i].set_data(
-                (np.append(aux_t, time_step), 
-                    np.append(aux_lria, np.sum([np.abs(i - j) for j in nbs]))))
-
-        # Rescale etc. needed!
-        self._axs[1, 1].relim()
-        self._axs[1, 1].autoscale_view()
 
 
 # Functions
@@ -1410,10 +1393,11 @@ def main():
     # the two lines below.
     print("# Giving you some time to enjoy the plots...")
     # Wait for given number of seconds
-    time.sleep(15)
+    time.sleep(5)
 
-    # Write out simulation results
+    # Write out simulation results and take a final screenshot
     write_simulation_results(options, conf, w, o)
+    o.take_screenshot()
     # End of the simulation
 
 
