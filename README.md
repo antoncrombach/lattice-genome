@@ -1,6 +1,6 @@
 # LATTICE GENOME
 
-I am designing and implementing lattice genomes for exploratory studies into genome folding. As lattice genomes are computationally quite light, they are perfect for use in education (i.e. on older computers and not-so-powerful laptops).
+We have been designing and implementing lattice genomes for exploratory studies into genome folding. As lattice genomes are computationally quite light, they are perfect for use in education (i.e. on older computers and not-so-powerful laptops).
 
 
 ## EXAMPLE USAGE
